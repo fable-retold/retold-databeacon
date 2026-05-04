@@ -84,7 +84,16 @@ const DESCRIPTOR_TYPE_TO_MEADOW_DATATYPE =
 	Float:         'Decimal',
 	Decimal:       'Decimal',
 	Boolean:       'Boolean',
-	Deleted:       'Boolean',
+	// Deleted is meadow's auto-managed soft-delete flag. Meadow always
+	// writes the integer literal `1` (or `0`) via UPDATE for portability
+	// across engines — postgres / mysql / mssql / sqlite all behave the
+	// same on the wire. So the column has to be a numeric type to accept
+	// the integer value: postgres `boolean` rejects `1` with a 42804
+	// type-mismatch error. Mapping to `Numeric` gets us SMALLINT/INT
+	// across the engines we wire (sqlite / mysql / mssql / postgresql),
+	// matches meadow's wire convention, and keeps `0`/`1` semantics
+	// readable at the SQL level.
+	Deleted:       'Numeric',
 	CreateDate:    'DateTime',
 	UpdateDate:    'DateTime',
 	DeleteDate:    'DateTime',
