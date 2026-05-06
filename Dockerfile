@@ -8,7 +8,11 @@ COPY package*.json ./
 # that builds resolve dep ranges fresh each time rather than from a
 # pinned tree; acceptable for retold modules where the upstream
 # ranges are owned by the same author.
-RUN npm install
+# `--legacy-peer-deps` because meadow-connection-manager declares
+# meadow-connection-rocksdb as `peerOptional` and npm 7+ reports a
+# false-positive conflict when rocksdb isn't installed (the optional
+# peer is, in practice, optional).
+RUN npm install --legacy-peer-deps
 COPY .quackage.json ./
 COPY source/ source/
 COPY bin/ bin/
@@ -22,7 +26,7 @@ RUN cp node_modules/pict/dist/pict.min.js source/services/web-app/web/pict.min.j
 FROM node:20-slim
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --legacy-peer-deps
 COPY --from=builder /app/source/ source/
 COPY --from=builder /app/bin/ bin/
 COPY --from=builder /app/model/ model/

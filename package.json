@@ -1,6 +1,6 @@
 {
 	"name": "retold-databeacon",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Deployable data beacon service — connect to remote databases, introspect schemas, generate REST endpoints, and expose beacon capabilities to the Ultravisor mesh.",
 	"main": "source/Retold-DataBeacon.js",
 	"bin": {
@@ -119,37 +119,37 @@
 	"devDependencies": {
 		"pict-docuserve": "^0.1.5",
 		"puppeteer": "^24.40.0",
-		"quackage": "^1.2.0",
+		"quackage": "^1.2.3",
 		"stricture": "^4.0.2",
 		"supertest": "^7.2.2"
 	},
 	"dependencies": {
 		"fable": "^3.1.71",
 		"fable-serviceproviderbase": "^3.0.19",
-		"meadow": "^2.0.37",
-		"meadow-connection-manager": "^1.1.0",
-		"meadow-connection-mssql": "^1.0.22",
-		"meadow-connection-mysql": "^1.0.18",
-		"meadow-connection-postgresql": "^1.0.4",
+		"meadow": "^2.0.38",
+		"meadow-connection-manager": "^1.1.1",
+		"meadow-connection-mssql": "^1.0.23",
+		"meadow-connection-mysql": "^1.0.19",
+		"meadow-connection-postgresql": "^1.0.5",
 		"meadow-connection-retold-databeacon": "^0.0.3",
 		"meadow-connection-sqlite": "^1.0.19",
-		"meadow-endpoints": "^4.0.17",
-		"meadow-migrationmanager": "^0.0.14",
+		"meadow-endpoints": "^4.0.19",
+		"meadow-migrationmanager": "^0.0.15",
 		"orator": "^6.1.1",
-		"orator-serviceserver-restify": "^2.0.10",
+		"orator-serviceserver-restify": "^2.0.11",
 		"orator-static-server": "^2.1.3",
 		"pict": "^1.0.365",
 		"pict-application": "^1.0.33",
 		"pict-router": "^1.0.9",
 		"pict-section-connection-form": "^0.0.2",
-		"pict-section-modal": "^0.0.5",
+		"pict-section-modal": "^0.0.6",
 		"pict-view": "^1.0.68",
 		"retold-facto": "^1.0.0",
 		"ultravisor-beacon": "^0.0.14"
 	},
 	"optionalDependencies": {
 		"meadow-connection-mongodb": "^1.0.3",
-		"meadow-connection-rocksdb": "^0.0.3",
+		"meadow-connection-rocksdb": "^1.0.0",
 		"meadow-connection-solr": "^1.0.3"
 	}
 }
