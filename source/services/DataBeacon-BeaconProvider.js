@@ -82,6 +82,15 @@ class DataBeaconBeaconProvider extends libFableServiceProviderBase
 			{
 				ServerURL: pBeaconConfig.ServerURL,
 				Name: pBeaconConfig.Name || 'retold-databeacon',
+				// UserName separates the HTTP-auth identity from the mesh
+				// handle. Forward from connectBeacon's incoming config so
+				// the Service options carry it through to the Connectivity
+				// transport layer (which getTransportConfig() now exposes
+				// to the BeaconClient's _authenticate). Without this
+				// forward, BeaconClient falls back to Name and auths as
+				// the mesh handle, which on shared UVs fails because the
+				// auth-beacon's user table has no account by that name.
+				// Needs ultravisor-beacon >= 1.0.4.
 				UserName: pBeaconConfig.UserName || '',
 				Password: pBeaconConfig.Password || '',
 				MaxConcurrent: pBeaconConfig.MaxConcurrent || 3,

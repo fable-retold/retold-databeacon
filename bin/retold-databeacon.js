@@ -71,6 +71,14 @@ let _CLIPort = null;
 let _CLIDBPath = null;
 let _CLICommand = 'serve';
 let _CLIMode = 'server';  // 'server' (default, agent-on-customer) | 'client' (engineer laptop)
+// Ultravisor auto-connect overrides. CLI flag > env var > config file > default.
+// All four are optional; if --ultravisor / DATABEACON_ULTRAVISOR_URL is unset
+// the beacon runs as a local REST service with no UV connection.
+let _CLIUltravisorURL = '';
+let _CLIBeaconName    = '';
+let _CLIBeaconUser    = '';
+let _CLIBeaconPassword = '';
+let _CLIMaxConcurrent = null;
 
 // Env-var defaults (CLI flags, parsed below, will override these).
 // Reading these first means a config-file env var also seeds _CLIConfig
@@ -159,6 +167,30 @@ for (let i = 0; i < tmpArgs.length; i++)
 		printHelp();
 		process.exit(0);
 	}
+	else if (tmpArg === '--ultravisor' || tmpArg === '-u')
+	{
+		if (tmpArgs[i + 1]) { _CLIUltravisorURL = tmpArgs[i + 1]; i++; }
+	}
+	else if (tmpArg === '--name' || tmpArg === '-n')
+	{
+		if (tmpArgs[i + 1]) { _CLIBeaconName = tmpArgs[i + 1]; i++; }
+	}
+	else if (tmpArg === '--user' || tmpArg === '-U')
+	{
+		// HTTP-auth username for the dispatcher's /1.0/Authenticate POST.
+		// Beacon name (--name) is the mesh handle UV uses for AffinityKey
+		// routing; --user has to match a registered account on the auth-
+		// beacon. Defaults to --name when omitted.
+		if (tmpArgs[i + 1]) { _CLIBeaconUser = tmpArgs[i + 1]; i++; }
+	}
+	else if (tmpArg === '--password' || tmpArg === '-w')
+	{
+		if (tmpArgs[i + 1]) { _CLIBeaconPassword = tmpArgs[i + 1]; i++; }
+	}
+	else if (tmpArg === '--max-concurrent')
+	{
+		if (tmpArgs[i + 1]) { _CLIMaxConcurrent = parseInt(tmpArgs[i + 1], 10); i++; }
+	}
 	else if (tmpArg === '--client')
 	{
 		_CLIMode = 'client';
@@ -216,13 +248,23 @@ Commands:
   init                 Initialize/create the database schema
 
 Options:
-  --config, -c <path>  Path to a JSON config file
-  --port, -p <port>    Override the API server port (default: 8389)
-  --db, -d <path>      Path to SQLite database file (default: ./data/databeacon.sqlite)
-  --log, -l [path]     Write log output to a file
-  --mode <server|client> Invocation mode (default: server)
-  --client             Shorthand for --mode client
-  --help, -h           Show this help
+  --config, -c <path>     Path to a JSON config file
+  --port, -p <port>       Override the API server port (default: 8389)
+  --db, -d <path>         Path to SQLite database file (default: ./data/databeacon.sqlite)
+  --log, -l [path]        Write log output to a file
+  --mode <server|client>  Invocation mode (default: server)
+  --client                Shorthand for --mode client
+  --ultravisor, -u <url>  Auto-connect to this Ultravisor on startup
+  --name, -n <name>       Beacon name on the Ultravisor (mesh handle; default: retold-databeacon)
+  --user, -U <user>       HTTP auth username on the Ultravisor. Defaults to
+                          --name. Set this when the beacon's mesh name differs
+                          from the registered USER account on the auth-beacon
+                          (e.g. on shared UVs where beacon names are arbitrary
+                          handles like "private_data_lake_beacon" but the auth-
+                          beacon's users are operator emails / service-account IDs).
+  --password, -w <pw>     Beacon auth password for the Ultravisor connection
+  --max-concurrent <n>    Max concurrent beacon work items (default: 3)
+  --help, -h              Show this help
 
 Modes:
   server               Default. Local data introspection + optional Ultravisor
@@ -242,7 +284,10 @@ Environment variables (CLI flags take precedence):
   DATABEACON_CONFIG_FILE       Same as --config
 
   DATABEACON_ULTRAVISOR_URL    If set, auto-connect to this Ultravisor on startup
-  DATABEACON_BEACON_NAME       Name to register with (default: retold-databeacon)
+  DATABEACON_BEACON_NAME       Mesh name to register with (default: retold-databeacon)
+  DATABEACON_BEACON_USER       HTTP auth username (default: BEACON_NAME). Override
+                               on shared UVs where the auth-beacon user account
+                               differs from the beacon's mesh handle.
   DATABEACON_BEACON_PASSWORD   Auth password for the beacon connection
   DATABEACON_MAX_CONCURRENT    Max concurrent work items (default: 3)
 
@@ -423,17 +468,37 @@ function commandServe()
 			// users with no Ultravisor in the loop see no behavior
 			// change. Failures are logged but don't kill the process —
 			// the beacon is still useful as a local REST surface.
-			let tmpUVUrl = _envOrFile('DATABEACON_ULTRAVISOR_URL');
+			// Resolution precedence per field: CLI flag > env var > default.
+			//
+			// Name = the beacon's mesh handle (AffinityKey routing).
+			// UserName = HTTP-auth identity for /1.0/Authenticate. On
+			// shared/QA UVs the beacon's mesh name (e.g. "retold-
+			// databeacon", "private_data_lake_beacon") usually isn't a
+			// registered user account on the auth-beacon, so HTTP auth
+			// fails with no session cookie — HTTP polling + any session-
+			// gated REST then 401. Set --user / DATABEACON_BEACON_USER to
+			// a real user/service-account on the auth-beacon to fix.
+			// When unset, falls back to Name for backward compat with
+			// promiscuous-UV / solo-beacon deployments.
+			let tmpUVUrl = _CLIUltravisorURL || _envOrFile('DATABEACON_ULTRAVISOR_URL');
 			if (tmpUVUrl)
 			{
+				let tmpBeaconName = _CLIBeaconName    || _envOrFile('DATABEACON_BEACON_NAME')     || 'retold-databeacon';
+				let tmpBeaconUser = _CLIBeaconUser    || _envOrFile('DATABEACON_BEACON_USER')     || '';
+				let tmpBeaconPw   = _CLIBeaconPassword || _envOrFile('DATABEACON_BEACON_PASSWORD') || '';
+				let tmpMaxConc    = _CLIMaxConcurrent || parseInt(_envOrFile('DATABEACON_MAX_CONCURRENT') || '3', 10);
 				let tmpBeaconConfig =
 				{
 					ServerURL:     tmpUVUrl,
-					Name:          _envOrFile('DATABEACON_BEACON_NAME') || 'retold-databeacon',
-					Password:      _envOrFile('DATABEACON_BEACON_PASSWORD') || '',
-					MaxConcurrent: parseInt(_envOrFile('DATABEACON_MAX_CONCURRENT') || '3', 10)
+					Name:          tmpBeaconName,
+					UserName:      tmpBeaconUser,
+					Password:      tmpBeaconPw,
+					MaxConcurrent: tmpMaxConc
 				};
-				_Fable.log.info(`Auto-connecting to Ultravisor at ${tmpUVUrl} as "${tmpBeaconConfig.Name}"...`);
+				let tmpAsLabel = tmpBeaconUser && tmpBeaconUser !== tmpBeaconName
+					? `"${tmpBeaconName}" (HTTP user: "${tmpBeaconUser}")`
+					: `"${tmpBeaconName}"`;
+				_Fable.log.info(`Auto-connecting to Ultravisor at ${tmpUVUrl} as ${tmpAsLabel}...`);
 				_Fable.DataBeaconBeaconProvider.connectBeacon(tmpBeaconConfig,
 					(pConnectError) =>
 					{
@@ -442,7 +507,7 @@ function commandServe()
 							_Fable.log.error(`Ultravisor auto-connect failed: ${pConnectError.message || pConnectError}`);
 							return;
 						}
-						_Fable.log.info(`Ultravisor auto-connect succeeded — registered as "${tmpBeaconConfig.Name}".`);
+						_Fable.log.info(`Ultravisor auto-connect succeeded — registered as ${tmpAsLabel}.`);
 					});
 			}
 		});
