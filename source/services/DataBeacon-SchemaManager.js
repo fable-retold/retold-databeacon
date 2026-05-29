@@ -214,13 +214,39 @@ class DataBeaconSchemaManager extends libFableServiceProviderBase
 			Notes: []
 		};
 
-		// 1. Introspect the live database into the same shape SchemaDiff
-		//    expects on both sides. SchemaIntrospector is engine-agnostic;
-		//    it delegates to the connector's introspectDatabaseSchema.
-		this._SchemaIntrospector.introspectDatabase(tmpSchemaService, (pIntErr, pIntrospected) =>
+		// 1. Introspect ONLY the descriptor's tables (scoped) rather than the
+		//    whole database, so per-table EnsureSchema cost is O(incoming
+		//    tables) instead of O(lake size). A table that does not exist yet
+		//    introspects to zero columns and is omitted here, so the diff sees
+		//    it as TablesAdded (create) — identical to a whole-DB introspect,
+		//    minus the spurious TablesRemoved (every other lake table).
+		let tmpScopedTargetNames = (Array.isArray(tmpMeadowSchema.Tables) ? tmpMeadowSchema.Tables : [])
+			.map((pScopeTbl) => (pScopeTbl && pScopeTbl.TableName))
+			.filter((pScopeNameCandidate) => (!!pScopeNameCandidate));
+		let tmpScopedIntrospect = this.fable.newAnticipate();
+		let tmpScopedTables = [];
+		for (let tmpScopeIdx = 0; tmpScopeIdx < tmpScopedTargetNames.length; tmpScopeIdx++)
+		{
+			let tmpScopeName = tmpScopedTargetNames[tmpScopeIdx];
+			tmpScopedIntrospect.anticipate((fScopeStep) =>
+			{
+				this._SchemaIntrospector.introspectTable(tmpSchemaService, tmpScopeName, (pScopeErr, pScopeTable) =>
+				{
+					if (pScopeErr) { return fScopeStep(pScopeErr); }
+					// Zero columns => the table does not exist yet; omit it so the
+					// diff treats it as a brand-new table to create.
+					if (pScopeTable && Array.isArray(pScopeTable.Columns) && pScopeTable.Columns.length > 0)
+					{
+						tmpScopedTables.push(pScopeTable);
+					}
+					return fScopeStep();
+				});
+			});
+		}
+		tmpScopedIntrospect.wait((pIntErr) =>
 		{
 			if (pIntErr) { return fCallback(pIntErr); }
-			let tmpIntrospected = pIntrospected || { Tables: [] };
+			let tmpIntrospected = { Tables: tmpScopedTables };
 			let tmpExistingTableNames = new Set();
 			let tmpIntroTables = Array.isArray(tmpIntrospected.Tables) ? tmpIntrospected.Tables : [];
 			for (let i = 0; i < tmpIntroTables.length; i++)

@@ -538,33 +538,42 @@ class DataBeaconBeaconProvider extends libFableServiceProviderBase
 				{
 					'Introspect':
 					{
-						Description: 'Introspect all tables for a connected database',
+						Description: 'Introspect tables for a connected database. Pass TableName to introspect and cache a single table (O(1)); omit it to enumerate the whole connection.',
 						SettingsSchema:
 						[
-							{ Name: 'IDBeaconConnection', DataType: 'Number', Required: true }
+							{ Name: 'IDBeaconConnection', DataType: 'Number', Required: true },
+							{ Name: 'TableName', DataType: 'String', Required: false }
 						],
 						Handler: function (pWorkItem, pContext, fHandlerCallback)
 						{
 							let tmpSettings = pWorkItem.Settings || {};
 							let tmpConnID = tmpSettings.IDBeaconConnection;
 
-							tmpFable.DataBeaconSchemaIntrospector.introspect(tmpConnID,
-								(pError, pResults) =>
+							let fIntrospectionComplete = (pError, pResults) =>
+							{
+								if (pError)
 								{
-									if (pError)
+									return fHandlerCallback(pError);
+								}
+								return fHandlerCallback(null,
+								{
+									Outputs:
 									{
-										return fHandlerCallback(pError);
-									}
-									return fHandlerCallback(null,
-									{
-										Outputs:
-										{
-											TableCount: pResults.length,
-											Tables: pResults.map((pR) => ({ TableName: pR.TableName, ColumnCount: pR.Columns.length, Columns: pR.Columns }))
-										},
-										Log: []
-									});
+										TableCount: pResults.length,
+										Tables: pResults.map((pR) => ({ TableName: pR.TableName, ColumnCount: pR.Columns.length, Columns: pR.Columns }))
+									},
+									Log: []
 								});
+							};
+
+							if (tmpSettings.TableName)
+							{
+								tmpFable.DataBeaconSchemaIntrospector.introspectTable(tmpConnID, tmpSettings.TableName, fIntrospectionComplete);
+							}
+							else
+							{
+								tmpFable.DataBeaconSchemaIntrospector.introspect(tmpConnID, fIntrospectionComplete);
+							}
 						}
 					},
 					'EnableEndpoint':

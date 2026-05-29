@@ -423,7 +423,14 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 	/**
 	 * Introspect all tables for a given connection ID and persist results.
 	 */
-	introspect(pIDBeaconConnection, fCallback)
+	/**
+	 * Resolve the live provider + dialect introspector for a connection.
+	 * Shared prelude for both full-database and single-table introspection.
+	 *
+	 * @param {number} pIDBeaconConnection
+	 * @param {function} fCallback - function(pError, { Type, Introspector, Provider, ConnectionRecord })
+	 */
+	_resolveIntrospectionContext(pIDBeaconConnection, fCallback)
 	{
 		let tmpConnectionBridge = this.fable.DataBeaconConnectionBridge;
 
@@ -459,9 +466,32 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 					return fCallback(new Error('Could not get connection provider instance'));
 				}
 
-				this.fable.log.info(`Introspecting ${tmpType} connection "${pConnectionRecord.Name}"...`);
+				return fCallback(null,
+				{
+					Type: tmpType,
+					Introspector: tmpIntrospector,
+					Provider: tmpProvider,
+					ConnectionRecord: pConnectionRecord
+				});
+			});
+	}
 
-				tmpIntrospector.listTables(tmpProvider,
+	/**
+	 * Introspect all tables for a given connection ID and persist results.
+	 */
+	introspect(pIDBeaconConnection, fCallback)
+	{
+		this._resolveIntrospectionContext(pIDBeaconConnection,
+			(pContextError, pContext) =>
+			{
+				if (pContextError)
+				{
+					return fCallback(pContextError);
+				}
+
+				this.fable.log.info(`Introspecting ${pContext.Type} connection "${pContext.ConnectionRecord.Name}"...`);
+
+				pContext.Introspector.listTables(pContext.Provider,
 					(pListError, pTables) =>
 					{
 						if (pListError)
@@ -480,7 +510,7 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 							tmpAnticipate.anticipate(
 								(fStepCallback) =>
 								{
-									tmpIntrospector.describeTable(tmpProvider, tmpTableInfo.TableName,
+									pContext.Introspector.describeTable(pContext.Provider, tmpTableInfo.TableName,
 										(pDescError, pColumns) =>
 										{
 											if (pDescError)
@@ -518,6 +548,70 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 										}
 										return fCallback(null, tmpResults);
 									});
+							});
+					});
+			});
+	}
+
+	/**
+	 * Introspect a SINGLE named table and persist just that table's
+	 * definition. O(1) regardless of how many tables the connection holds —
+	 * used by the per-table enable-endpoint flow so a freshly-created table
+	 * can be registered without re-enumerating (and re-persisting) the whole
+	 * database. The IntrospectedTable cache is additive/upsert, so scoping to
+	 * one table leaves every other table's cached entry intact.
+	 *
+	 * @param {number} pIDBeaconConnection
+	 * @param {string} pTableName
+	 * @param {function} fCallback - function(pError, pResults) — pResults is a
+	 *   one-element array in the same shape introspect() returns.
+	 */
+	introspectTable(pIDBeaconConnection, pTableName, fCallback)
+	{
+		if (!pTableName)
+		{
+			return fCallback(new Error('introspectTable: a table name is required.'));
+		}
+
+		this._resolveIntrospectionContext(pIDBeaconConnection,
+			(pContextError, pContext) =>
+			{
+				if (pContextError)
+				{
+					return fCallback(pContextError);
+				}
+
+				this.fable.log.info(`Introspecting ${pContext.Type} table "${pTableName}" (single-table)...`);
+
+				pContext.Introspector.describeTable(pContext.Provider, pTableName,
+					(pDescError, pColumns) =>
+					{
+						if (pDescError)
+						{
+							return fCallback(pDescError);
+						}
+						if (!pColumns || pColumns.length === 0)
+						{
+							return fCallback(new Error(`introspectTable: table "${pTableName}" was not found (no columns).`));
+						}
+
+						let tmpResults =
+						[
+							{
+								TableName: pTableName,
+								RowCountEstimate: 0,
+								Columns: pColumns
+							}
+						];
+
+						this._persistIntrospectionResults(pIDBeaconConnection, tmpResults,
+							(pPersistError) =>
+							{
+								if (pPersistError)
+								{
+									return fCallback(pPersistError);
+								}
+								return fCallback(null, tmpResults);
 							});
 					});
 			});
