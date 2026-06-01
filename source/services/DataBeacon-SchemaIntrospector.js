@@ -132,7 +132,7 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 			{
 				let tmpPool = pProvider.pool || pProvider;
 				let tmpSQL = `
-					SELECT c.column_name, c.data_type, c.character_maximum_length, c.is_nullable, c.column_default,
+					SELECT c.column_name, c.data_type, c.character_maximum_length, c.is_nullable, c.column_default, c.identity_generation,
 						   CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END AS is_primary_key
 					FROM information_schema.columns c
 					LEFT JOIN (
@@ -153,7 +153,10 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 						for (let i = 0; i < tmpRows.length; i++)
 						{
 							let tmpRow = tmpRows[i];
-							let tmpIsAuto = (tmpRow.column_default || '').indexOf('nextval') >= 0;
+							// Postgres 10+ IDENTITY columns have NULL column_default;
+							// the flag lives in identity_generation (ALWAYS / BY DEFAULT).
+							// Pre-10 SERIAL columns set column_default to nextval(seq).
+							let tmpIsAuto = !!tmpRow.identity_generation || (tmpRow.column_default || '').indexOf('nextval') >= 0;
 							tmpColumns.push(
 							{
 								Name: tmpRow.column_name,
