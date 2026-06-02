@@ -576,6 +576,37 @@ class DataBeaconBeaconProvider extends libFableServiceProviderBase
 							}
 						}
 					},
+					'IntrospectMeadowPackage':
+					{
+						Description: 'Return a Meadow package descriptor ({ Scope, DefaultIdentifier, Schema, DefaultObject }) for one table on a connected database. Delegates to the underlying meadow-connection-{driver} generateMeadowPackageFromTable, so type coverage matches what meadow-migrationmanager uses for schema diffing.',
+						SettingsSchema:
+						[
+							{ Name: 'IDBeaconConnection', DataType: 'Number', Required: true },
+							{ Name: 'TableName',          DataType: 'String', Required: true }
+						],
+						Handler: function (pWorkItem, pContext, fHandlerCallback)
+						{
+							let tmpSettings = pWorkItem.Settings || {};
+							let tmpConnID = tmpSettings.IDBeaconConnection;
+							let tmpTableName = tmpSettings.TableName;
+
+							let tmpBridge = tmpFable.DataBeaconConnectionBridge;
+							if (!tmpBridge || !tmpBridge.isConnected(tmpConnID))
+							{
+								return fHandlerCallback(new Error(`IntrospectMeadowPackage: connection [${tmpConnID}] is not live. Connect first.`));
+							}
+							let tmpConn = tmpBridge.getConnectionInstance(tmpConnID);
+							if (!tmpConn || typeof tmpConn.generateMeadowPackageFromTable !== 'function')
+							{
+								return fHandlerCallback(new Error(`IntrospectMeadowPackage: connection [${tmpConnID}] driver does not expose generateMeadowPackageFromTable.`));
+							}
+							tmpConn.generateMeadowPackageFromTable(tmpTableName, (pError, pPackage) =>
+							{
+								if (pError) { return fHandlerCallback(pError); }
+								return fHandlerCallback(null, { Outputs: { Package: pPackage }, Log: [] });
+							});
+						}
+					},
 					'EnableEndpoint':
 					{
 						Description: 'Enable CRUD REST endpoints for an introspected table',
