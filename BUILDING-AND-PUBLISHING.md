@@ -164,7 +164,7 @@ postpublish: BUILD_DOCKER=1 → tag + push       ← image trigger
   ↓ (tag arrives at GitHub)
 .github/workflows/publish-image.yml fires:
   - docker buildx build --platform linux/amd64,linux/arm64
-  - docker push ghcr.io/stevenvelozo/retold-databeacon:<version>
+  - docker push ghcr.io/fable-retold/retold-databeacon:<version>
   - tags: <version>, <major>.<minor>, <major>, latest
 ```
 
@@ -183,13 +183,13 @@ After `release:patch` completes:
 2. **GHCR workflow**: visit
    `https://github.com/fable-retold/retold-databeacon/actions` and
    confirm the "Publish container image" run succeeded.
-3. **Image**: `docker pull ghcr.io/stevenvelozo/retold-databeacon:<version>`
+3. **Image**: `docker pull ghcr.io/fable-retold/retold-databeacon:<version>`
    should succeed. The image is also tagged as `latest`, `<major>`, and
    `<major>.<minor>`.
 4. **Smoke test**:
    ```bash
    docker run --rm -p 8389:8389 \
-     ghcr.io/stevenvelozo/retold-databeacon:latest
+     ghcr.io/fable-retold/retold-databeacon:latest
    curl http://localhost:8389/beacon/ultravisor/status
    ```
 
@@ -273,7 +273,7 @@ whatever stability level fits.
 ### Pull and run
 
 ```bash
-docker pull ghcr.io/stevenvelozo/retold-databeacon:latest
+docker pull ghcr.io/fable-retold/retold-databeacon:latest
 
 docker run -d --name databeacon \
   -p 8389:8389 \
@@ -281,7 +281,7 @@ docker run -d --name databeacon \
   -e DATABEACON_ULTRAVISOR_URL=http://your-ultravisor:54321 \
   -e DATABEACON_BEACON_NAME=my-databeacon \
   -e DATABEACON_BEACON_PASSWORD_FILE=/run/secrets/uv-pass \
-  ghcr.io/stevenvelozo/retold-databeacon:latest
+  ghcr.io/fable-retold/retold-databeacon:latest
 ```
 
 ### Configuration via env vars

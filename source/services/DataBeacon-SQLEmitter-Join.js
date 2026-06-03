@@ -65,7 +65,8 @@ const DIALECT_PARAM_PLACEHOLDER = {
 	'PostgreSQL': () => '$1',
 	'SQLite':     () => '?',
 	'MySQL':      () => '?',
-	'MSSQL':      () => '@p1'
+	'MSSQL':      () => '@p1',
+	'Oracle':     () => ':1'
 };
 
 const buildJoinPagedSQL = (pType, pSpec) =>
@@ -73,7 +74,7 @@ const buildJoinPagedSQL = (pType, pSpec) =>
 	let tmpQuote = DIALECT_QUOTE[pType];
 	if (!tmpQuote)
 	{
-		throw new Error('Join: unsupported dialect "' + pType + '". Expected PostgreSQL | SQLite | MySQL | MSSQL.');
+		throw new Error('Join: unsupported dialect "' + pType + '". Expected PostgreSQL | SQLite | MySQL | MSSQL | Oracle.');
 	}
 
 	let tmpSpec = pSpec || {};
@@ -236,6 +237,24 @@ const buildJoinPagedSQL = (pType, pSpec) =>
 				' ORDER BY src.' + tmpQuote(tmpOrderBy) + ' ASC' +
 				' OFFSET ' + tmpOffset + ' ROWS FETCH NEXT ' + tmpLimit + ' ROWS ONLY';
 		}
+	}
+	else if (pType === 'Oracle')
+	{
+		// Oracle 12c+ row-limiting clause (Oracle has no LIMIT keyword).
+		// Keyset uses FETCH FIRST (the cursor is supplied by the
+		// WHERE src.<OrderBy> > :1 above); the legacy offset path uses
+		// OFFSET <n> ROWS FETCH NEXT <m> ROWS ONLY.
+		let tmpTail = tmpKeysetMode
+			? ' FETCH FIRST ' + tmpLimit + ' ROWS ONLY'
+			: ' OFFSET ' + tmpOffset + ' ROWS FETCH NEXT ' + tmpLimit + ' ROWS ONLY';
+		tmpSQL =
+			'SELECT ' + tmpSelectParts.join(', ') +
+			' FROM ' + tmpQuote(tmpSpec.Table) + ' src' +
+			' INNER JOIN ' + tmpQuote(tmpSpec.RelatedTable) + ' rel' +
+			' ON src.' + tmpQuote(tmpJoinOn.SourceField) + ' = rel.' + tmpQuote(tmpJoinOn.RelatedField) +
+			tmpWhereSQL +
+			' ORDER BY src.' + tmpQuote(tmpOrderBy) + ' ASC' +
+			tmpTail;
 	}
 	else
 	{

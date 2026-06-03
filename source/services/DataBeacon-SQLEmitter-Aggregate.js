@@ -42,7 +42,8 @@ const DIALECT_QUOTE = {
 	'PostgreSQL': (pId) => '"' + pId + '"',
 	'SQLite':     (pId) => '"' + pId + '"',
 	'MySQL':      (pId) => '`' + pId + '`',
-	'MSSQL':      (pId) => '[' + pId + ']'
+	'MSSQL':      (pId) => '[' + pId + ']',
+	'Oracle':     (pId) => '"' + pId + '"'
 };
 
 const isValidIdentifier = (pId) =>
@@ -55,7 +56,7 @@ const buildAggregateSQL = (pType, pSpec) =>
 	let tmpQuote = DIALECT_QUOTE[pType];
 	if (!tmpQuote)
 	{
-		throw new Error('Aggregate: unsupported dialect "' + pType + '". Expected PostgreSQL | SQLite | MySQL | MSSQL.');
+		throw new Error('Aggregate: unsupported dialect "' + pType + '". Expected PostgreSQL | SQLite | MySQL | MSSQL | Oracle.');
 	}
 
 	let tmpSpec = pSpec || {};

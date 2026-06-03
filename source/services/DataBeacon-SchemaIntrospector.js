@@ -18,7 +18,7 @@ const defaultSchemaIntrospectorOptions = (
 // Connection types whose query panel input is free-form SQL. Everything
 // else is expected to be a JSON descriptor (or driver-specific string)
 // and bypasses the SELECT-only gate.
-const _SQLTypes = { MySQL: true, PostgreSQL: true, MSSQL: true, SQLite: true };
+const _SQLTypes = { MySQL: true, PostgreSQL: true, MSSQL: true, SQLite: true, Oracle: true };
 
 class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 {
@@ -38,7 +38,7 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 	 * Get an introspector object for the given connection type.
 	 * Returns { listTables(pPool, fCallback), describeTable(pPool, pTableName, fCallback) }
 	 */
-	_getIntrospector(pType)
+	_getIntrospector(pType, pOwner)
 	{
 		switch (pType)
 		{
@@ -50,9 +50,126 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 				return this._mssqlIntrospector();
 			case 'SQLite':
 				return this._sqliteIntrospector();
+			case 'Oracle':
+				return this._oracleIntrospector(pOwner);
 			default:
 				return null;
 		}
+	}
+
+	/**
+	 * Acquire a pooled Oracle connection, run one statement, return its rows
+	 * as plain objects, and release the connection. Positional binds use the
+	 * Oracle `:1` form. Shared by the Oracle introspector and _runQuery.
+	 */
+	_oracleExec(pProvider, pSQL, pBinds, fCallback)
+	{
+		if (!pProvider || typeof pProvider.getConnection !== 'function')
+		{
+			return fCallback(new Error('Oracle provider is not available or not connected.'));
+		}
+		pProvider.getConnection((pConnError, pConnection) =>
+		{
+			if (pConnError)
+			{
+				return fCallback(pConnError);
+			}
+			let tmpOutFormat = (pProvider.oracledb && pProvider.oracledb.OUT_FORMAT_OBJECT) || 4002;
+			pConnection.execute(pSQL, pBinds || [], { outFormat: tmpOutFormat })
+				.then((pResult) =>
+				{
+					let tmpRows = (pResult && pResult.rows) || [];
+					pConnection.close().then(() => fCallback(null, tmpRows)).catch(() => fCallback(null, tmpRows));
+				})
+				.catch((pError) =>
+				{
+					pConnection.close().then(() => fCallback(pError)).catch(() => fCallback(pError));
+				});
+		});
+	}
+
+	_oracleIntrospector(pOwner)
+	{
+		// When an Owner (schema) is configured, introspect that schema's tables via
+		// the ALL_* dictionary views (cross-schema, granted access). With no Owner,
+		// fall back to USER_* (tables owned by the connecting user).
+		let tmpOwner = (typeof pOwner === 'string' && pOwner.trim().length > 0) ? pOwner.trim() : null;
+		return {
+			listTables: (pProvider, fCallback) =>
+			{
+				let tmpSQL = tmpOwner
+					? 'SELECT TABLE_NAME, NUM_ROWS FROM ALL_TABLES WHERE OWNER = :1 ORDER BY TABLE_NAME'
+					: 'SELECT TABLE_NAME, NUM_ROWS FROM USER_TABLES ORDER BY TABLE_NAME';
+				this._oracleExec(pProvider, tmpSQL, tmpOwner ? [tmpOwner] : [],
+					(pError, pRows) =>
+					{
+						if (pError) return fCallback(pError);
+						let tmpTables = [];
+						for (let i = 0; i < pRows.length; i++)
+						{
+							tmpTables.push({ TableName: pRows[i].TABLE_NAME, RowCountEstimate: pRows[i].NUM_ROWS || 0 });
+						}
+						return fCallback(null, tmpTables);
+					});
+			},
+			describeTable: (pProvider, pTableName, fCallback) =>
+			{
+				// Table name is the data-dictionary (typically upper-cased) name from
+				// listTables. Owner-scoped queries bind :1=owner, :2=table; user-scoped
+				// bind :1=table.
+				let tmpColumnSQL, tmpPKSQL, tmpIdentitySQL, tmpBinds;
+				if (tmpOwner)
+				{
+					tmpColumnSQL = 'SELECT COLUMN_NAME, DATA_TYPE, CHAR_LENGTH, DATA_LENGTH, NULLABLE, DATA_DEFAULT FROM ALL_TAB_COLUMNS WHERE OWNER = :1 AND TABLE_NAME = :2 ORDER BY COLUMN_ID';
+					tmpPKSQL = 'SELECT cc.COLUMN_NAME FROM ALL_CONSTRAINTS c JOIN ALL_CONS_COLUMNS cc ON c.CONSTRAINT_NAME = cc.CONSTRAINT_NAME AND c.OWNER = cc.OWNER WHERE c.CONSTRAINT_TYPE = \'P\' AND c.OWNER = :1 AND c.TABLE_NAME = :2';
+					tmpIdentitySQL = 'SELECT COLUMN_NAME FROM ALL_TAB_IDENTITY_COLS WHERE OWNER = :1 AND TABLE_NAME = :2';
+					tmpBinds = [tmpOwner, pTableName];
+				}
+				else
+				{
+					tmpColumnSQL = 'SELECT COLUMN_NAME, DATA_TYPE, CHAR_LENGTH, DATA_LENGTH, NULLABLE, DATA_DEFAULT FROM USER_TAB_COLUMNS WHERE TABLE_NAME = :1 ORDER BY COLUMN_ID';
+					tmpPKSQL = 'SELECT cc.COLUMN_NAME FROM USER_CONSTRAINTS c JOIN USER_CONS_COLUMNS cc ON c.CONSTRAINT_NAME = cc.CONSTRAINT_NAME WHERE c.CONSTRAINT_TYPE = \'P\' AND c.TABLE_NAME = :1';
+					tmpIdentitySQL = 'SELECT COLUMN_NAME FROM USER_TAB_IDENTITY_COLS WHERE TABLE_NAME = :1';
+					tmpBinds = [pTableName];
+				}
+
+				this._oracleExec(pProvider, tmpColumnSQL, tmpBinds, (pColError, pColRows) =>
+				{
+					if (pColError) return fCallback(pColError);
+					this._oracleExec(pProvider, tmpPKSQL, tmpBinds, (pPKError, pPKRows) =>
+					{
+						if (pPKError) return fCallback(pPKError);
+						this._oracleExec(pProvider, tmpIdentitySQL, tmpBinds, (pIdError, pIdRows) =>
+						{
+							// (ALL|USER)_TAB_IDENTITY_COLS is 12c+; a failure here just means
+							// "no identity columns" rather than aborting the table.
+							let tmpPKSet = new Set((pPKRows || []).map((pRow) => pRow.COLUMN_NAME));
+							let tmpIdentitySet = new Set((pIdError ? [] : (pIdRows || [])).map((pRow) => pRow.COLUMN_NAME));
+
+							let tmpColumns = [];
+							for (let i = 0; i < pColRows.length; i++)
+							{
+								let tmpRow = pColRows[i];
+								let tmpIsPK = tmpPKSet.has(tmpRow.COLUMN_NAME);
+								let tmpIsIdentity = tmpIdentitySet.has(tmpRow.COLUMN_NAME);
+								tmpColumns.push(
+								{
+									Name: tmpRow.COLUMN_NAME,
+									NativeType: tmpRow.DATA_TYPE,
+									MaxLength: tmpRow.CHAR_LENGTH || tmpRow.DATA_LENGTH || null,
+									Nullable: tmpRow.NULLABLE === 'Y',
+									IsPrimaryKey: tmpIsPK,
+									IsAutoIncrement: tmpIsIdentity,
+									DefaultValue: (tmpRow.DATA_DEFAULT === undefined) ? null : tmpRow.DATA_DEFAULT,
+									MeadowType: this._mapNativeTypeToMeadow(tmpRow.DATA_TYPE, tmpIsPK, tmpIsIdentity, tmpRow.COLUMN_NAME, pTableName)
+								});
+							}
+							return fCallback(null, tmpColumns);
+						});
+					});
+				});
+			}
+		};
 	}
 
 	_mysqlIntrospector()
@@ -361,7 +478,8 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 
 		// Decimal/float types
 		if (tmpType.indexOf('DECIMAL') >= 0 || tmpType.indexOf('NUMERIC') >= 0 || tmpType.indexOf('FLOAT') >= 0 ||
-			tmpType.indexOf('DOUBLE') >= 0 || tmpType.indexOf('REAL') >= 0 || tmpType === 'MONEY' || tmpType === 'SMALLMONEY')
+			tmpType.indexOf('DOUBLE') >= 0 || tmpType.indexOf('REAL') >= 0 || tmpType === 'MONEY' || tmpType === 'SMALLMONEY' ||
+			tmpType.indexOf('NUMBER') >= 0)
 		{
 			return 'Numeric';
 		}
@@ -455,7 +573,20 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 				}
 
 				let tmpType = pConnectionRecord.Type;
-				let tmpIntrospector = this._getIntrospector(tmpType);
+				// Oracle: an optional Owner/Schema in the connection Config scopes
+				// introspection to another schema's tables (ALL_* views) instead of
+				// only the connecting user's own tables (USER_*).
+				let tmpOwner = '';
+				if (tmpType === 'Oracle')
+				{
+					try
+					{
+						let tmpConfig = JSON.parse(pConnectionRecord.Config || '{}');
+						tmpOwner = tmpConfig.Owner || tmpConfig.owner || tmpConfig.Schema || tmpConfig.schema || '';
+					}
+					catch (pParseError) { /* no/invalid Config — falls back to USER_* */ }
+				}
+				let tmpIntrospector = this._getIntrospector(tmpType, tmpOwner);
 
 				if (!tmpIntrospector)
 				{
@@ -888,6 +1019,8 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 				return this._runRocksDBQuery(pProvider, pSQL, fCallback);
 			case 'RetoldDataBeacon':
 				return this._runRetoldDataBeaconQuery(pProvider, pSQL, fCallback);
+			case 'Oracle':
+				return this._oracleExec(pProvider, pSQL, pParams, fCallback);
 			default:
 				return fCallback(new Error(`Query execution not supported for type: ${pType}`));
 		}
