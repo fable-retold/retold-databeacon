@@ -1,182 +1,182 @@
 {
-	"name": "retold-databeacon",
-	"version": "1.0.19",
-	"description": "Deployable data beacon service — connect to remote databases, introspect schemas, generate REST endpoints, and expose beacon capabilities to the Ultravisor mesh.",
-	"main": "source/Retold-DataBeacon.js",
-	"bin": {
-		"retold-databeacon": "bin/retold-databeacon.js"
-	},
-	"scripts": {
-		"start": "node bin/retold-databeacon.js",
-		"test": "npx quack test",
-		"test-browser": "npx mocha test/DataBeacon_Browser_Integration_tests.js -u tdd --exit --timeout 120000",
-		"coverage": "npx quack coverage",
-		"brand": "node node_modules/pict-section-theme/bin/pict-section-theme-brand.js --manifest ../../../Retold-Modules-Manifest.json --module retold-databeacon --favicons source/services/web-app/web/favicons",
-		"prebuild": "npm run brand",
-		"build": "npx quack build",
-		"docker-build": "docker build -t retold-databeacon .",
-		"docker-run": "docker run -p 8389:8389 -v $(pwd)/data:/app/data retold-databeacon",
-		"docker-up": "docker compose up -d --build",
-		"docker-down": "docker compose down",
-		"docker-package": "bash scripts/docker-package.sh",
-		"docker-package-fast": "bash scripts/docker-package.sh --skip-build",
-		"docker-test-up": "docker compose -f test/docker-compose.yml up -d",
-		"docker-test-down": "docker compose -f test/docker-compose.yml down",
-		"dev": "node test/dev-server.js",
-		"dev-seed": "node test/seed-dev.js",
-		"prepublishOnly": "npm test",
-		"postversion": "npx quack release postversion",
-		"postpublish": "npx quack release postpublish",
-		"publish:docker": "npx quack release publish --image",
-		"release:patch": "npx quack release patch",
-		"release:minor": "npx quack release minor",
-		"release:major": "npx quack release major",
-		"release:patch:image": "npx quack release patch --image",
-		"release:minor:image": "npx quack release minor --image",
-		"release:major:image": "npx quack release major --image"
-	},
-	"mocha": {
-		"spec": "test/RetoldDataBeacon_tests.js",
-		"diff": true,
-		"extension": [
-			"js"
-		],
-		"package": "./package.json",
-		"reporter": "spec",
-		"slow": "75",
-		"timeout": "10000",
-		"ui": "tdd",
-		"watch-files": [
-			"source/**/*.js",
-			"test/**/*.js"
-		],
-		"watch-ignore": [
-			"lib/vendor"
-		]
-	},
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/fable-retold/retold-databeacon.git"
-	},
-	"keywords": [
-		"data",
-		"beacon",
-		"database",
-		"introspection",
-		"REST",
-		"ultravisor"
-	],
-	"retoldBeacon": {
-		"displayName": "Retold Databeacon",
-		"description": "REST/meadow proxy over a connected database, with schema introspection and endpoint enable/disable.",
-		"category": "database",
-		"mode": "standalone-service",
-		"bin": "bin/retold-databeacon.js",
-		"argTemplate": [
-			"serve",
-			"--port",
-			{
-				"fromLabPath": "Port"
-			},
-			"--config",
-			{
-				"fromLabPath": "ConfigPath"
-			}
-		],
-		"healthCheck": {
-			"path": "/beacon/capabilities"
-		},
-		"defaultPort": 8500,
-		"requiresUltravisor": false,
-		"configTemplate": {
-			"APIServerPort": "{{Port}}",
-			"SQLite": {
-				"SQLiteFilePath": "{{BeaconDir}}/databeacon.sqlite"
-			}
-		},
-		"configForm": {
-			"Fields": [
-				{
-					"Name": "EngineDatabase",
-					"Label": "Target engine / database",
-					"Type": "lab-engine-database-picker",
-					"Required": false
-				}
-			]
-		},
-		"docker": {
-			"image": "retold-databeacon",
-			"dockerfile": "retold-databeacon.Dockerfile",
-			"dataMountPath": "/app/data",
-			"configMountPath": "/app/data/config.json",
-			"exposedPort": 8500
-		}
-	},
-	"author": "Steven Velozo <steven@velozo.com> (http://velozo.com/)",
-	"license": "MIT",
-	"bugs": {
-		"url": "https://github.com/fable-retold/retold-databeacon/issues"
-	},
-	"homepage": "https://github.com/fable-retold/retold-databeacon",
-	"devDependencies": {
-		"pict-docuserve": "^1.4.19",
-		"puppeteer": "^24.40.0",
-		"quackage": "^1.3.0",
-		"stricture": "^4.0.6",
-		"supertest": "^7.2.2"
-	},
-	"dependencies": {
-		"fable": "^3.1.76",
-		"fable-serviceproviderbase": "^3.0.19",
-		"meadow": "^2.0.43",
-		"meadow-connection-manager": "^1.1.5",
-		"meadow-connection-mssql": "^1.0.23",
-		"meadow-connection-mysql": "^1.0.19",
-		"meadow-connection-oracle": "^1.0.2",
-		"meadow-connection-postgresql": "^1.0.7",
-		"meadow-connection-retold-databeacon": "^1.0.0",
-		"meadow-connection-sqlite": "^1.0.20",
-		"meadow-endpoints": "^4.0.22",
-		"meadow-migrationmanager": "^1.0.5",
-		"orator": "^6.1.2",
-		"orator-serviceserver-restify": "^2.0.11",
-		"orator-static-server": "^2.1.4",
-		"pict": "^1.0.381",
-		"pict-application": "^1.0.34",
-		"pict-provider-theme": "^1.1.2",
-		"pict-router": "^1.0.10",
-		"pict-section-code": "^1.0.11",
-		"pict-section-connection-form": "^1.0.0",
-		"pict-section-login": "^1.0.0",
-		"pict-section-modal": "^1.1.4",
-		"pict-section-theme": "^1.1.1",
-		"pict-view": "^1.0.68",
-		"retold-facto": "^1.0.2",
-		"ultravisor-beacon": "^1.0.5"
-	},
-	"optionalDependencies": {
-		"meadow-connection-mongodb": "^1.0.3",
-		"meadow-connection-rocksdb": "^1.0.0",
-		"meadow-connection-solr": "^1.0.3"
-	},
-	"retold": {
-		"brand": {
-			"Hash": "retold-databeacon",
-			"Name": "DataBeacon",
-			"Tagline": "Connect, introspect, and expose remote databases",
-			"Palette": "ocean",
-			"Icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"frame-retold-databeacon-filled-light\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#28a9bf\"/>\n\t\t<g clip-path=\"url(#frame-retold-databeacon-filled-light)\"><circle cx=\"48\" cy=\"48\" r=\"39\" fill=\"#de5d3b\" opacity=\"0.85\"/>\n\t\t\t\t\t<circle cx=\"48\" cy=\"48\" r=\"28\" fill=\"rgba(255,255,255,0.18)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"38\" font-weight=\"700\"\n\t\t\tfill=\"#ffffff\" letter-spacing=\"-1\">RD</text>\n\t</svg>",
-			"IconType": "svg",
-			"Favicon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"fav-retold-databeacon-light\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#28a9bf\"/>\n\t\t<g clip-path=\"url(#fav-retold-databeacon-light)\"><circle cx=\"48\" cy=\"48\" r=\"43\" fill=\"rgba(255,255,255,0.22)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"60\" font-weight=\"800\"\n\t\t\tfill=\"#ffffff\" letter-spacing=\"-1\">R</text>\n\t</svg>",
-			"FaviconDark": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"fav-retold-databeacon-dark\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#6ac8d9\"/>\n\t\t<g clip-path=\"url(#fav-retold-databeacon-dark)\"><circle cx=\"48\" cy=\"48\" r=\"43\" fill=\"rgba(255,255,255,0.22)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"60\" font-weight=\"800\"\n\t\t\tfill=\"#101418\" letter-spacing=\"-1\">R</text>\n\t</svg>",
-			"Colors": {
-				"Primary": "#28a9bf",
-				"Secondary": "#de5d3b",
-				"PrimaryLight": "#28a9bf",
-				"PrimaryDark": "#6ac8d9",
-				"SecondaryLight": "#de5d3b",
-				"SecondaryDark": "#e7a08d"
-			}
-		}
-	}
+  "name": "retold-databeacon",
+  "version": "1.0.20",
+  "description": "Deployable data beacon service \u2014 connect to remote databases, introspect schemas, generate REST endpoints, and expose beacon capabilities to the Ultravisor mesh.",
+  "main": "source/Retold-DataBeacon.js",
+  "bin": {
+    "retold-databeacon": "bin/retold-databeacon.js"
+  },
+  "scripts": {
+    "start": "node bin/retold-databeacon.js",
+    "test": "npx quack test",
+    "test-browser": "npx mocha test/DataBeacon_Browser_Integration_tests.js -u tdd --exit --timeout 120000",
+    "coverage": "npx quack coverage",
+    "brand": "node node_modules/pict-section-theme/bin/pict-section-theme-brand.js --manifest ../../../Retold-Modules-Manifest.json --module retold-databeacon --favicons source/services/web-app/web/favicons",
+    "prebuild": "npm run brand",
+    "build": "npx quack build",
+    "docker-build": "docker build -t retold-databeacon .",
+    "docker-run": "docker run -p 8389:8389 -v $(pwd)/data:/app/data retold-databeacon",
+    "docker-up": "docker compose up -d --build",
+    "docker-down": "docker compose down",
+    "docker-package": "bash scripts/docker-package.sh",
+    "docker-package-fast": "bash scripts/docker-package.sh --skip-build",
+    "docker-test-up": "docker compose -f test/docker-compose.yml up -d",
+    "docker-test-down": "docker compose -f test/docker-compose.yml down",
+    "dev": "node test/dev-server.js",
+    "dev-seed": "node test/seed-dev.js",
+    "prepublishOnly": "npm test",
+    "postversion": "npx quack release postversion",
+    "postpublish": "npx quack release postpublish",
+    "publish:docker": "npx quack release publish --image",
+    "release:patch": "npx quack release patch",
+    "release:minor": "npx quack release minor",
+    "release:major": "npx quack release major",
+    "release:patch:image": "npx quack release patch --image",
+    "release:minor:image": "npx quack release minor --image",
+    "release:major:image": "npx quack release major --image"
+  },
+  "mocha": {
+    "spec": "test/RetoldDataBeacon_tests.js",
+    "diff": true,
+    "extension": [
+      "js"
+    ],
+    "package": "./package.json",
+    "reporter": "spec",
+    "slow": "75",
+    "timeout": "10000",
+    "ui": "tdd",
+    "watch-files": [
+      "source/**/*.js",
+      "test/**/*.js"
+    ],
+    "watch-ignore": [
+      "lib/vendor"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fable-retold/retold-databeacon.git"
+  },
+  "keywords": [
+    "data",
+    "beacon",
+    "database",
+    "introspection",
+    "REST",
+    "ultravisor"
+  ],
+  "retoldBeacon": {
+    "displayName": "Retold Databeacon",
+    "description": "REST/meadow proxy over a connected database, with schema introspection and endpoint enable/disable.",
+    "category": "database",
+    "mode": "standalone-service",
+    "bin": "bin/retold-databeacon.js",
+    "argTemplate": [
+      "serve",
+      "--port",
+      {
+        "fromLabPath": "Port"
+      },
+      "--config",
+      {
+        "fromLabPath": "ConfigPath"
+      }
+    ],
+    "healthCheck": {
+      "path": "/beacon/capabilities"
+    },
+    "defaultPort": 8500,
+    "requiresUltravisor": false,
+    "configTemplate": {
+      "APIServerPort": "{{Port}}",
+      "SQLite": {
+        "SQLiteFilePath": "{{BeaconDir}}/databeacon.sqlite"
+      }
+    },
+    "configForm": {
+      "Fields": [
+        {
+          "Name": "EngineDatabase",
+          "Label": "Target engine / database",
+          "Type": "lab-engine-database-picker",
+          "Required": false
+        }
+      ]
+    },
+    "docker": {
+      "image": "retold-databeacon",
+      "dockerfile": "retold-databeacon.Dockerfile",
+      "dataMountPath": "/app/data",
+      "configMountPath": "/app/data/config.json",
+      "exposedPort": 8500
+    }
+  },
+  "author": "Steven Velozo <steven@velozo.com> (http://velozo.com/)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/fable-retold/retold-databeacon/issues"
+  },
+  "homepage": "https://github.com/fable-retold/retold-databeacon",
+  "devDependencies": {
+    "pict-docuserve": "^1.4.19",
+    "puppeteer": "^24.40.0",
+    "quackage": "^1.3.0",
+    "stricture": "^4.0.6",
+    "supertest": "^7.2.2"
+  },
+  "dependencies": {
+    "fable": "^3.1.76",
+    "fable-serviceproviderbase": "^3.0.19",
+    "meadow": "^2.0.44",
+    "meadow-connection-manager": "^1.1.5",
+    "meadow-connection-mssql": "^1.0.23",
+    "meadow-connection-mysql": "^1.0.19",
+    "meadow-connection-oracle": "^1.0.2",
+    "meadow-connection-postgresql": "^1.0.7",
+    "meadow-connection-retold-databeacon": "^1.0.0",
+    "meadow-connection-sqlite": "^1.0.20",
+    "meadow-endpoints": "^4.0.22",
+    "meadow-migrationmanager": "^1.0.5",
+    "orator": "^6.1.2",
+    "orator-serviceserver-restify": "^2.0.11",
+    "orator-static-server": "^2.1.4",
+    "pict": "^1.0.381",
+    "pict-application": "^1.0.34",
+    "pict-provider-theme": "^1.1.2",
+    "pict-router": "^1.0.10",
+    "pict-section-code": "^1.0.11",
+    "pict-section-connection-form": "^1.0.0",
+    "pict-section-login": "^1.0.0",
+    "pict-section-modal": "^1.1.4",
+    "pict-section-theme": "^1.1.1",
+    "pict-view": "^1.0.68",
+    "retold-facto": "^1.0.2",
+    "ultravisor-beacon": "^1.0.5"
+  },
+  "optionalDependencies": {
+    "meadow-connection-mongodb": "^1.0.3",
+    "meadow-connection-rocksdb": "^1.0.0",
+    "meadow-connection-solr": "^1.0.3"
+  },
+  "retold": {
+    "brand": {
+      "Hash": "retold-databeacon",
+      "Name": "DataBeacon",
+      "Tagline": "Connect, introspect, and expose remote databases",
+      "Palette": "ocean",
+      "Icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"frame-retold-databeacon-filled-light\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#28a9bf\"/>\n\t\t<g clip-path=\"url(#frame-retold-databeacon-filled-light)\"><circle cx=\"48\" cy=\"48\" r=\"39\" fill=\"#de5d3b\" opacity=\"0.85\"/>\n\t\t\t\t\t<circle cx=\"48\" cy=\"48\" r=\"28\" fill=\"rgba(255,255,255,0.18)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"38\" font-weight=\"700\"\n\t\t\tfill=\"#ffffff\" letter-spacing=\"-1\">RD</text>\n\t</svg>",
+      "IconType": "svg",
+      "Favicon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"fav-retold-databeacon-light\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#28a9bf\"/>\n\t\t<g clip-path=\"url(#fav-retold-databeacon-light)\"><circle cx=\"48\" cy=\"48\" r=\"43\" fill=\"rgba(255,255,255,0.22)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"60\" font-weight=\"800\"\n\t\t\tfill=\"#ffffff\" letter-spacing=\"-1\">R</text>\n\t</svg>",
+      "FaviconDark": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"fav-retold-databeacon-dark\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#6ac8d9\"/>\n\t\t<g clip-path=\"url(#fav-retold-databeacon-dark)\"><circle cx=\"48\" cy=\"48\" r=\"43\" fill=\"rgba(255,255,255,0.22)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"60\" font-weight=\"800\"\n\t\t\tfill=\"#101418\" letter-spacing=\"-1\">R</text>\n\t</svg>",
+      "Colors": {
+        "Primary": "#28a9bf",
+        "Secondary": "#de5d3b",
+        "PrimaryLight": "#28a9bf",
+        "PrimaryDark": "#6ac8d9",
+        "SecondaryLight": "#de5d3b",
+        "SecondaryDark": "#e7a08d"
+      }
+    }
+  }
 }

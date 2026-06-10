@@ -171,42 +171,6 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 	}
 
 	/**
-	 * Project a connection instance's resolved settings into fable settings
-	 * for a settings-driven DAL provider.
-	 *
-	 * Meadow's MeadowEndpoints provider reads its connection parameters from
-	 * fable.settings.MeadowEndpoints at provider-init; the connector projects
-	 * its resolved config onto ITS OWN fable scope (the connection manager's
-	 * per-connection isolation), which the DAL never sees — so without this,
-	 * the provider silently falls back to its built-in defaults
-	 * (127.0.0.1:8086) and every CRUD route dials the wrong host.
-	 *
-	 * Uses SettingsManager.fill(): a gap-fill that never overwrites values
-	 * already present — so explicit boot configuration wins over the
-	 * connection record, and with multiple MeadowEndpoints connections on one
-	 * beacon the FIRST enabled connection's settings apply (a documented
-	 * limitation; the durable fix is an instance-driven meadow provider, at
-	 * which point this projection disappears).
-	 *
-	 * @param {object} pTargetFable - the fable the DAL provider reads from
-	 * @param {string} pConnectionType
-	 * @param {object} pConnectionInstance - the live connector (exposes .settings)
-	 */
-	_projectConnectionSettings(pTargetFable, pConnectionType, pConnectionInstance)
-	{
-		if (pConnectionType !== 'MeadowEndpoints' || !pConnectionInstance || typeof pConnectionInstance.settings !== 'object')
-		{
-			return;
-		}
-		if (!pTargetFable.SettingsManager || typeof pTargetFable.SettingsManager.fill !== 'function')
-		{
-			this.log.warn('DynamicEndpointManager: no SettingsManager.fill available — MeadowEndpoints provider may fall back to defaults.');
-			return;
-		}
-		pTargetFable.SettingsManager.fill({ MeadowEndpoints: pConnectionInstance.settings });
-	}
-
-	/**
 	 * Get or create a Meadow instance for a specific connection.
 	 * This ensures provider isolation between different external databases.
 	 */
@@ -331,14 +295,16 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 							let tmpScopedFable = this._ConnectionScopedFables[String(pIDBeaconConnection)];
 							if (tmpScopedFable)
 							{
+								// The bound instance is the provider's configuration
+								// AND session source — meadow's MeadowEndpoints
+								// provider (like the SQL providers) reads the live
+								// connection instance at this key per request.
 								tmpScopedFable[tmpProviderKey] = tmpConnectionInstance;
-								this._projectConnectionSettings(tmpScopedFable, tmpType, tmpConnectionInstance);
 							}
 							else
 							{
 								// Fallback: single-connection case, set on global fable
 								this.fable[tmpProviderKey] = tmpConnectionInstance;
-								this._projectConnectionSettings(this.fable, tmpType, tmpConnectionInstance);
 							}
 
 							// Create DAL entity
