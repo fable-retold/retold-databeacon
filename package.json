@@ -1,6 +1,6 @@
 {
 	"name": "retold-databeacon",
-	"version": "1.0.17",
+	"version": "1.0.18",
 	"description": "Deployable data beacon service — connect to remote databases, introspect schemas, generate REST endpoints, and expose beacon capabilities to the Ultravisor mesh.",
 	"main": "source/Retold-DataBeacon.js",
 	"bin": {
