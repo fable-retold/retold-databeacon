@@ -52,6 +52,9 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 				return this._sqliteIntrospector();
 			case 'Oracle':
 				return this._oracleIntrospector(pOwner);
+			case 'MeadowEndpoints':
+				// pOwner carries the parsed connection Config for this type.
+				return this._meadowEndpointsIntrospector(pOwner || {});
 			default:
 				return null;
 		}
@@ -545,6 +548,162 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 	 * Introspect all tables for a given connection ID and persist results.
 	 */
 	/**
+	 * Introspector for MeadowEndpoints connections — a remote meadow REST API
+	 * has no information_schema, but it publishes its full extended model as
+	 * a single JSON document (per-table MeadowSchema with meadow types). The
+	 * document URL comes from the connection Config:
+	 *
+	 *   Config.SchemaDocumentURL        (required) e.g.
+	 *       https://api.example.com/docs/Extended-Schema.json
+	 *   Config.SchemaDocumentTTLSeconds (optional, default 900)
+	 *
+	 * The document is large (megabytes), so it is cached per URL with a
+	 * medium TTL and concurrent fetches are deduplicated.
+	 *
+	 * @param {object} pConfig - the parsed connection Config
+	 * @return {{ listTables: function, describeTable: function }}
+	 */
+	_meadowEndpointsIntrospector(pConfig)
+	{
+		let tmpDocumentURL = pConfig.SchemaDocumentURL || '';
+		let tmpParsedTTL = parseInt(pConfig.SchemaDocumentTTLSeconds, 10);
+		let tmpTTLSeconds = Number.isFinite(tmpParsedTTL) && tmpParsedTTL >= 0 ? tmpParsedTTL : 900;
+		let tmpMissingURLError = () => new Error('MeadowEndpoints introspection requires Config.SchemaDocumentURL (the remote extended-schema document, e.g. https://<api-host>/docs/Headlight-Extended.json).');
+
+		return {
+			listTables: (pProvider, fCallback) =>
+			{
+				if (!tmpDocumentURL) return fCallback(tmpMissingURLError());
+				this._fetchSchemaDocument(tmpDocumentURL, tmpTTLSeconds,
+					(pError, pDocument) =>
+					{
+						if (pError) return fCallback(pError);
+						let tmpTables = Object.keys(pDocument.Tables || {}).sort()
+							.map((pTableName) => ({ TableName: pTableName, RowCountEstimate: 0 }));
+						return fCallback(null, tmpTables);
+					});
+			},
+			describeTable: (pProvider, pTableName, fCallback) =>
+			{
+				if (!tmpDocumentURL) return fCallback(tmpMissingURLError());
+				this._fetchSchemaDocument(tmpDocumentURL, tmpTTLSeconds,
+					(pError, pDocument) =>
+					{
+						if (pError) return fCallback(pError);
+						let tmpTable = (pDocument.Tables || {})[pTableName];
+						let tmpMeadowSchema = tmpTable && tmpTable.MeadowSchema;
+						if (!tmpMeadowSchema || !Array.isArray(tmpMeadowSchema.Schema))
+						{
+							return fCallback(new Error(`Table not present in the remote schema document: ${pTableName}`));
+						}
+						let tmpColumns = [];
+						for (let i = 0; i < tmpMeadowSchema.Schema.length; i++)
+						{
+							let tmpEntry = tmpMeadowSchema.Schema[i];
+							let tmpIsIdentity = (tmpEntry.Type === 'AutoIdentity');
+							tmpColumns.push(
+							{
+								Name: tmpEntry.Column,
+								// The document already speaks meadow types — surface the
+								// type in both slots so downstream consumers agree.
+								NativeType: tmpEntry.Type,
+								MaxLength: (tmpEntry.Size && tmpEntry.Size !== 'Default') ? tmpEntry.Size : null,
+								Nullable: !tmpIsIdentity,
+								IsPrimaryKey: tmpIsIdentity,
+								IsAutoIncrement: tmpIsIdentity,
+								DefaultValue: null,
+								MeadowType: tmpEntry.Type
+							});
+						}
+						return fCallback(null, tmpColumns);
+					});
+			}
+		};
+	}
+
+	/**
+	 * Fetch (and cache) a remote schema document. Cache is per URL with a TTL;
+	 * concurrent requests for the same URL share one in-flight fetch.
+	 *
+	 * @param {string} pURL
+	 * @param {number} pTTLSeconds
+	 * @param {function} fCallback - function(pError, pDocument)
+	 */
+	_fetchSchemaDocument(pURL, pTTLSeconds, fCallback)
+	{
+		if (!this._SchemaDocumentCache)
+		{
+			this._SchemaDocumentCache = {};
+		}
+		let tmpEntry = this._SchemaDocumentCache[pURL];
+		let tmpNowMs = Date.now();
+		if (tmpEntry && tmpEntry.Document && (tmpNowMs - tmpEntry.FetchedAtMs) < (pTTLSeconds * 1000))
+		{
+			return fCallback(null, tmpEntry.Document);
+		}
+		if (tmpEntry && tmpEntry.PendingCallbacks)
+		{
+			tmpEntry.PendingCallbacks.push(fCallback);
+			return;
+		}
+		tmpEntry = this._SchemaDocumentCache[pURL] = { FetchedAtMs: 0, Document: (tmpEntry && tmpEntry.Document) || null, PendingCallbacks: [ fCallback ] };
+
+		let fSettle = (pError, pDocument) =>
+		{
+			let tmpCallbacks = tmpEntry.PendingCallbacks || [];
+			tmpEntry.PendingCallbacks = null;
+			if (!pError)
+			{
+				tmpEntry.Document = pDocument;
+				tmpEntry.FetchedAtMs = Date.now();
+			}
+			for (let i = 0; i < tmpCallbacks.length; i++)
+			{
+				tmpCallbacks[i](pError, pDocument || tmpEntry.Document);
+			}
+		};
+
+		let tmpLib;
+		let tmpParsedURL;
+		try
+		{
+			tmpParsedURL = new URL(pURL);
+			tmpLib = (tmpParsedURL.protocol === 'https:') ? require('https') : require('http');
+		}
+		catch (pURLError)
+		{
+			return fSettle(new Error(`Invalid SchemaDocumentURL: ${pURL}`));
+		}
+		this.log.info(`SchemaIntrospector: fetching remote schema document ${pURL} (TTL ${pTTLSeconds}s)...`);
+		let tmpRequest = tmpLib.get(pURL, (pResponse) =>
+		{
+			if (pResponse.statusCode >= 400)
+			{
+				pResponse.resume();
+				return fSettle(new Error(`Schema document fetch failed: HTTP ${pResponse.statusCode} for ${pURL}`));
+			}
+			let tmpChunks = [];
+			pResponse.on('data', (pChunk) => { tmpChunks.push(pChunk); });
+			pResponse.on('end', () =>
+			{
+				try
+				{
+					let tmpDocument = JSON.parse(Buffer.concat(tmpChunks).toString('utf8'));
+					this.log.info(`SchemaIntrospector: schema document loaded (${Object.keys(tmpDocument.Tables || {}).length} tables).`);
+					return fSettle(null, tmpDocument);
+				}
+				catch (pParseError)
+				{
+					return fSettle(new Error(`Schema document is not valid JSON: ${pParseError.message}`));
+				}
+			});
+			pResponse.on('error', (pStreamError) => fSettle(pStreamError));
+		});
+		tmpRequest.on('error', (pRequestError) => fSettle(pRequestError));
+		tmpRequest.setTimeout(60000, () => { tmpRequest.destroy(new Error(`Schema document fetch timed out: ${pURL}`)); });
+	}
+
+	/**
 	 * Resolve the live provider + dialect introspector for a connection.
 	 * Shared prelude for both full-database and single-table introspection.
 	 *
@@ -576,15 +735,19 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 				// Oracle: an optional Owner/Schema in the connection Config scopes
 				// introspection to another schema's tables (ALL_* views) instead of
 				// only the connecting user's own tables (USER_*).
+				// MeadowEndpoints: the whole parsed Config rides through — the
+				// introspector reads SchemaDocumentURL (+ TTL) from it.
 				let tmpOwner = '';
-				if (tmpType === 'Oracle')
+				if (tmpType === 'Oracle' || tmpType === 'MeadowEndpoints')
 				{
 					try
 					{
 						let tmpConfig = JSON.parse(pConnectionRecord.Config || '{}');
-						tmpOwner = tmpConfig.Owner || tmpConfig.owner || tmpConfig.Schema || tmpConfig.schema || '';
+						tmpOwner = (tmpType === 'MeadowEndpoints')
+							? tmpConfig
+							: (tmpConfig.Owner || tmpConfig.owner || tmpConfig.Schema || tmpConfig.schema || '');
 					}
-					catch (pParseError) { /* no/invalid Config — falls back to USER_* */ }
+					catch (pParseError) { /* no/invalid Config — type-specific fallbacks apply */ }
 				}
 				let tmpIntrospector = this._getIntrospector(tmpType, tmpOwner);
 
