@@ -12,6 +12,7 @@
  */
 
 const Chai = require('chai');
+const libAssert = require('assert');
 const Expect = Chai.expect;
 const libHttp = require('http');
 const libPict = require('pict');
@@ -214,5 +215,52 @@ suite('MeadowEndpoints introspector', function ()
 				fDone();
 			});
 		});
+	});
+});
+
+suite('MeadowEndpoints DAL settings projection', function ()
+{
+	const libDynamicEndpointManager = require('../source/services/DataBeacon-DynamicEndpointManager.js');
+
+	function buildManager()
+	{
+		let tmpFable = new libPict({ Product: 'SettingsProjectionTest', LogStreams: [ { streamtype: 'console', level: 'fatal' } ] });
+		tmpFable.serviceManager.addServiceType('DataBeaconDynamicEndpointManager', libDynamicEndpointManager);
+		return { fable: tmpFable, manager: tmpFable.serviceManager.instantiateServiceProvider('DataBeaconDynamicEndpointManager') };
+	}
+
+	test('fills settings.MeadowEndpoints from the connector so the DAL provider can read it', function ()
+	{
+		const tmpHarness = buildManager();
+		const tmpScopedFable = Object.create(tmpHarness.fable);
+		const tmpInstanceSettings = { ServerProtocol: 'https', ServerAddress: 'api.qa.example.com', ServerPort: '443', Authentication: { UserName: 'svc' } };
+		tmpHarness.manager._projectConnectionSettings(tmpScopedFable, 'MeadowEndpoints', { settings: tmpInstanceSettings });
+		// fill deep-copies — assert by value, and via the settings getter the
+		// provider walks (works from any fable scope).
+		libAssert.deepStrictEqual(tmpScopedFable.settings.MeadowEndpoints, tmpInstanceSettings);
+		libAssert.ok(tmpHarness.fable.settings.hasOwnProperty('MeadowEndpoints'), 'the meadow provider hasOwnProperty gate must pass');
+	});
+
+	test('explicit boot configuration wins — fill never overwrites', function ()
+	{
+		const tmpHarness = buildManager();
+		tmpHarness.fable.SettingsManager.fill({ MeadowEndpoints: { ServerAddress: 'operator-pinned.example.com' } });
+		tmpHarness.manager._projectConnectionSettings(tmpHarness.fable, 'MeadowEndpoints', { settings: { ServerAddress: 'connection.example.com' } });
+		libAssert.strictEqual(tmpHarness.fable.settings.MeadowEndpoints.ServerAddress, 'operator-pinned.example.com');
+	});
+
+	test('with two connections the first enabled wins (documented limitation)', function ()
+	{
+		const tmpHarness = buildManager();
+		tmpHarness.manager._projectConnectionSettings(tmpHarness.fable, 'MeadowEndpoints', { settings: { ServerAddress: 'a.example.com' } });
+		tmpHarness.manager._projectConnectionSettings(tmpHarness.fable, 'MeadowEndpoints', { settings: { ServerAddress: 'b.example.com' } });
+		libAssert.strictEqual(tmpHarness.fable.settings.MeadowEndpoints.ServerAddress, 'a.example.com');
+	});
+
+	test('non-MeadowEndpoints types are a no-op', function ()
+	{
+		const tmpHarness = buildManager();
+		tmpHarness.manager._projectConnectionSettings(tmpHarness.fable, 'MySQL', { settings: { ServerAddress: 'x' } });
+		libAssert.strictEqual(tmpHarness.fable.settings.MeadowEndpoints, undefined);
 	});
 });
