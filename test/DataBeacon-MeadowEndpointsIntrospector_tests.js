@@ -64,6 +64,12 @@ function startStubAPI()
 				pResponse.writeHead(200, { 'Content-Type': 'application/json' });
 				return pResponse.end(JSON.stringify(MINI_DOCUMENT));
 			}
+			if (pRequest.url === '/1.0/Retold/Model/PublicLake')
+			{
+				_FetchCount++;
+				pResponse.writeHead(200, { 'Content-Type': 'application/json' });
+				return pResponse.end(JSON.stringify({ Name: 'PublicLake', Initialized: true, Model: { Tables: MINI_DOCUMENT.Tables } }));
+			}
 			if (pRequest.url === '/docs/NotJson.json')
 			{
 				pResponse.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -198,6 +204,22 @@ suite('MeadowEndpoints introspector', function ()
 					fDone();
 				});
 			}, 5);
+		});
+	});
+
+	test('the retold-data-service model envelope (Model.Tables) normalizes transparently', function (fDone)
+	{
+		const tmpIntrospector = buildIntrospectorService()._getIntrospector('MeadowEndpoints', { SchemaDocumentURL: `${_BaseURL}/1.0/Retold/Model/PublicLake` });
+		tmpIntrospector.listTables(null, (pError, pTables) =>
+		{
+			Expect(pError).to.equal(null);
+			Expect(pTables.map((pTable) => pTable.TableName)).to.deep.equal([ 'Document', 'Project' ]);
+			tmpIntrospector.describeTable(null, 'Document', (pDescribeError, pColumns) =>
+			{
+				Expect(pDescribeError).to.equal(null);
+				Expect(pColumns.find((pColumn) => pColumn.Name === 'IDDocument').MeadowType).to.equal('AutoIdentity');
+				fDone();
+			});
 		});
 	});
 

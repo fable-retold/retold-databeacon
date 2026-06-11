@@ -689,6 +689,15 @@ class DataBeaconSchemaIntrospector extends libFableServiceProviderBase
 				try
 				{
 					let tmpDocument = JSON.parse(Buffer.concat(tmpChunks).toString('utf8'));
+					// Two published shapes: the bare extended document
+					// ({ Tables: {...} }, e.g. Headlight-Extended.json) and
+					// retold-data-service's GET /1.0/Retold/Model/:Name
+					// envelope ({ ..., Model: { Tables: {...} } }). Normalize
+					// before caching so the introspector reads one shape.
+					if (!tmpDocument.Tables && tmpDocument.Model && tmpDocument.Model.Tables)
+					{
+						tmpDocument = { Tables: tmpDocument.Model.Tables };
+					}
 					this.log.info(`SchemaIntrospector: schema document loaded (${Object.keys(tmpDocument.Tables || {}).length} tables).`);
 					return fSettle(null, tmpDocument);
 				}
