@@ -1,6 +1,6 @@
 {
 	"name": "retold-databeacon",
-	"version": "1.0.22",
+	"version": "1.0.23",
 	"description": "Deployable data beacon service — connect to remote databases, introspect schemas, generate REST endpoints, and expose beacon capabilities to the Ultravisor mesh.",
 	"main": "source/Retold-DataBeacon.js",
 	"bin": {
@@ -126,7 +126,7 @@
 		"supertest": "^7.2.2"
 	},
 	"dependencies": {
-		"fable": "^3.1.77",
+		"fable": "^3.1.78",
 		"fable-serviceproviderbase": "^3.0.19",
 		"meadow": "^2.0.45",
 		"meadow-connection-manager": "^1.1.5",
@@ -141,7 +141,7 @@
 		"orator": "^6.1.2",
 		"orator-serviceserver-restify": "^2.0.11",
 		"orator-static-server": "^2.1.4",
-		"pict": "^1.0.382",
+		"pict": "^1.0.383",
 		"pict-application": "^1.0.34",
 		"pict-provider-theme": "^1.1.2",
 		"pict-router": "^1.0.10",
