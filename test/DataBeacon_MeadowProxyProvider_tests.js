@@ -204,8 +204,58 @@ suite('DataBeacon-MeadowProxyProvider', () =>
 					Expect(_TestRequests[0].path).to.equal('/1.0/bookstore-mssql/Book');
 					Expect(_TestRequests[0].headers['x-beacon-user']).to.equal('engineer-alice');
 					Expect(_TestRequests[0].headers['x-databeacon-meadowproxy']).to.equal('1');
+					Expect(_TestRequests[0].headers['x-trusted-session']).to.equal(undefined, 'no Session setting → no forwarded identity');
 					fDone();
 				});
+		});
+
+		test('a forwarded Session object is presented to the loopback as x-trusted-session JSON', (fDone) =>
+		{
+			let tmpService = makeFakeBeaconService();
+			let tmpFable = makeFakeFable(_TestPort);
+			libMeadowProxy.registerMeadowProxyCapability(tmpService, tmpFable);
+
+			let tmpHandler = tmpService._registered[0].actions.Request.Handler;
+			tmpHandler(
+				{ Settings: { Method: 'GET', Path: '/1.0/bookstore-mssql/Book', Session: { SessionID: 'sess-abc', CustomerID: 182, UserID: 5150 } } },
+				{},
+				(pError) =>
+				{
+					Expect(pError).to.equal(null);
+					let tmpForwarded = JSON.parse(_TestRequests[0].headers['x-trusted-session']);
+					Expect(tmpForwarded.SessionID).to.equal('sess-abc');
+					Expect(tmpForwarded.CustomerID).to.equal(182);
+					Expect(tmpForwarded.UserID).to.equal(5150);
+					fDone();
+				});
+		});
+
+		test('a bare Session string is wrapped as { SessionID }', (fDone) =>
+		{
+			let tmpService = makeFakeBeaconService();
+			let tmpFable = makeFakeFable(_TestPort);
+			libMeadowProxy.registerMeadowProxyCapability(tmpService, tmpFable);
+
+			let tmpHandler = tmpService._registered[0].actions.Request.Handler;
+			tmpHandler(
+				{ Settings: { Method: 'GET', Path: '/1.0/bookstore-mssql/Book', Session: 'sess-bare' } },
+				{},
+				(pError) =>
+				{
+					Expect(pError).to.equal(null);
+					let tmpForwarded = JSON.parse(_TestRequests[0].headers['x-trusted-session']);
+					Expect(tmpForwarded.SessionID).to.equal('sess-bare');
+					fDone();
+				});
+		});
+
+		test('the Request action advertises the Session setting in its schema', () =>
+		{
+			let tmpService = makeFakeBeaconService();
+			let tmpFable = makeFakeFable(_TestPort);
+			libMeadowProxy.registerMeadowProxyCapability(tmpService, tmpFable);
+			let tmpSchemaNames = tmpService._registered[0].actions.Request.SettingsSchema.map((pS) => pS.Name);
+			Expect(tmpSchemaNames).to.include('Session');
 		});
 
 		test('forwards POST body to the loopback server', (fDone) =>

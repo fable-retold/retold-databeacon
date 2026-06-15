@@ -26,6 +26,17 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 
 		this.serviceType = 'DataBeaconDynamicEndpointManager';
 
+		// Dynamic endpoints are reached only via the MeadowProxy loopback (a
+		// machine intermediary), so the request's identity arrives as the
+		// forwarded `x-trusted-session` header rather than an orator session.
+		// Default the meadow-endpoints session source to 'Header' so that
+		// forwarded caller identity is honored (and stamped onto upstream calls
+		// by remote-fronting connections). Operators can override in config.
+		if (!this.fable.settings.MeadowEndpointsSessionDataSource)
+		{
+			this.fable.settings.MeadowEndpointsSessionDataSource = 'Header';
+		}
+
 		// Track enabled dynamic endpoints
 		// Key: "connectionId-tableName", Value: { dal, endpoints, connectionId, tableName }
 		this._EnabledEndpoints = {};

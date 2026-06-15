@@ -189,7 +189,14 @@ const registerMeadowProxyCapability = function (pBeaconService, pFable, pOptions
 						{ Name: 'Method',     DataType: 'String', Required: true },
 						{ Name: 'Path',       DataType: 'String', Required: true },
 						{ Name: 'Body',       DataType: 'String', Required: false },
-						{ Name: 'RemoteUser', DataType: 'String', Required: false }
+						{ Name: 'RemoteUser', DataType: 'String', Required: false },
+
+						// Forwarded caller identity. A session id string or a
+						// session object ({ SessionID, CustomerID, UserID, ... }).
+						// Presented to the local REST API as `x-trusted-session`
+						// so a remote-fronting connection acts under the caller's
+						// identity instead of its bound machine session.
+						{ Name: 'Session',    DataType: 'Object', Required: false }
 					],
 					Handler: function (pWorkItem, pContext, fHandlerCallback)
 					{
@@ -228,6 +235,16 @@ const registerMeadowProxyCapability = function (pBeaconService, pFable, pOptions
 						let tmpHeaders = {};
 						tmpHeaders[tmpOptions.InternalHeaderName] = tmpOptions.InternalHeaderValue;
 						tmpHeaders['X-Beacon-User'] = tmpRemoteUser;
+
+						// Forward the caller identity so a remote-fronting connection
+						// presents it upstream (instead of its bound machine session).
+						// meadow-endpoints (Header session source) reads x-trusted-session.
+						if (tmpSettings.Session)
+						{
+							let tmpSessionObject = (typeof(tmpSettings.Session) === 'string')
+								? { SessionID: tmpSettings.Session } : tmpSettings.Session;
+							tmpHeaders['x-trusted-session'] = JSON.stringify(tmpSessionObject);
+						}
 
 						loopbackRequest(
 							{
