@@ -9,8 +9,8 @@
 #   - One step to wire: GITHUB_TOKEN already has `packages: write`
 #
 # Image lands at:
-#   ghcr.io/stevenvelozo/retold-databeacon:<version>
-#   ghcr.io/stevenvelozo/retold-databeacon:latest   (only on the
+#   ghcr.io/fable-retold/retold-databeacon:<version>
+#   ghcr.io/fable-retold/retold-databeacon:latest   (only on the
 #                                                    highest stable tag)
 #
 # Manual run: `Actions → Publish container image → Run workflow`,
