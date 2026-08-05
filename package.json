@@ -1,6 +1,6 @@
 {
 	"name": "retold-databeacon",
-	"version": "1.0.25",
+	"version": "1.0.26",
 	"description": "Deployable data beacon service — connect to remote databases, introspect schemas, generate REST endpoints, and expose beacon capabilities to the Ultravisor mesh.",
 	"main": "source/Retold-DataBeacon.js",
 	"bin": {
@@ -36,7 +36,10 @@
 		"release:major:image": "npx quack release major --image"
 	},
 	"mocha": {
-		"spec": "test/RetoldDataBeacon_tests.js",
+		"spec": [
+			"test/RetoldDataBeacon_tests.js",
+			"test/DataBeacon-MeadowSchemaIdentity_tests.js"
+		],
 		"diff": true,
 		"extension": [
 			"js"
@@ -133,7 +136,7 @@
 		"meadow-connection-mssql": "^1.0.24",
 		"meadow-connection-mysql": "^1.0.20",
 		"meadow-connection-oracle": "^1.0.2",
-		"meadow-connection-postgresql": "^1.0.9",
+		"meadow-connection-postgresql": "^1.0.10",
 		"meadow-connection-retold-databeacon": "^1.0.0",
 		"meadow-connection-sqlite": "^1.0.21",
 		"meadow-endpoints": "^4.0.23",

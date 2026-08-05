@@ -161,13 +161,15 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 			}
 		}
 
-		// Find the primary key column for DefaultIdentifier
-		let tmpIDColumn = pColumns.find((pC) => pC.IsPrimaryKey);
-		let tmpDefaultIdentifier = tmpIDColumn ? tmpIDColumn.Name : (pColumns.length > 0 ? pColumns[0].Name : 'ID');
+		// DefaultIdentifier is only set when a single column provably identifies a
+		// row.  meadow stamps it onto every query and the foxhound dialects order
+		// capped reads by it, so naming a non-unique column here silently
+		// reintroduces the LIMIT/OFFSET row loss it exists to prevent — a
+		// composite key or a heap table has no scalar identity to offer.
+		let tmpPrimaryKeyColumns = pColumns.filter((pC) => pC.IsPrimaryKey);
 
-		return {
+		let tmpPackage = {
 			Scope: pTableName,
-			DefaultIdentifier: tmpDefaultIdentifier,
 			Domain: 'Default',
 			Schema: tmpSchema,
 			DefaultObject: tmpDefaultObject,
@@ -179,6 +181,18 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 				required: []
 			}
 		};
+
+		if (tmpPrimaryKeyColumns.length === 1)
+		{
+			tmpPackage.DefaultIdentifier = tmpPrimaryKeyColumns[0].Name;
+		}
+		else
+		{
+			this.fable.log.warn(`Table [${pTableName}] has ${tmpPrimaryKeyColumns.length < 1 ? 'no primary key' : 'a composite primary key'}; endpoints are enabled without a DefaultIdentifier. Paged reads of this table cannot be ordered deterministically and may return overlapping pages.`,
+				{ TableName: pTableName, PrimaryKeyColumns: tmpPrimaryKeyColumns.map((pC) => pC.Name) });
+		}
+
+		return tmpPackage;
 	}
 
 	/**
