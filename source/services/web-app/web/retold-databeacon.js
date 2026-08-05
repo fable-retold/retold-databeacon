@@ -678,12 +678,39 @@ return fCallback();}}onAfterInitialize(){if(this.pict.LogNoisiness>3){this.log.t
 // This is useful in auth-gated SPAs where routes should only resolve after
 // the DOM is ready (e.g. after login).  Can also be set globally via
 // pict.settings.RouterSkipRouteResolveOnAdd — either one enables the skip.
-SkipRouteResolveOnAdd:false};class PictRouter extends libPictProvider{constructor(pFable,pOptions,pServiceHash){let tmpOptions=Object.assign({},_DEFAULT_PROVIDER_CONFIGURATION,pOptions);super(pFable,tmpOptions,pServiceHash);// Initialize the navigo router and set the base path to '/'
+SkipRouteResolveOnAdd:false,// Document title management.  When a DefaultTitle is set (or a per-route title
+// is passed to addRoute), the router keeps document.title in step with the
+// current route: a route with a title renders `<title><TitleSuffix>`, a route
+// without one falls back to DefaultTitle so a title never lingers from the
+// previous page.  All three are empty by default, so with no configuration the
+// router does not touch document.title (fully backward compatible).
+DefaultTitle:'',TitleSuffix:''};class PictRouter extends libPictProvider{constructor(pFable,pOptions,pServiceHash){let tmpOptions=Object.assign({},_DEFAULT_PROVIDER_CONFIGURATION,pOptions);super(pFable,tmpOptions,pServiceHash);// Initialize the navigo router and set the base path to '/'
 this.router=new libNavigo('/',{strategy:'ONE',hash:true});if(this.options.Routes){for(let i=0;i<this.options.Routes.length;i++){if(this.options.Routes[i].path&&this.options.Routes[i].template){this.addRoute(this.options.Routes[i].path,this.options.Routes[i].template);}else if(this.options.Routes[i].path&&this.options.Routes[i].render){this.addRoute(this.options.Routes[i].path,this.options.Routes[i].render);}else{this.pict.log.warn(`Route ${i} is missing a render function or template string.`);}}}// This is the route to render after load
 this.afterPersistView='/Manyfest/Overview';}get currentScope(){return this.AppData?.ManyfestRecord?.Scope??'Default';}forwardToScopedRoute(pData){this.navigate(`${pData.url}/${this.currentScope}`);}onInitializeAsync(fCallback){return super.onInitializeAsync(fCallback);}/**
+	 * Compose a document title from a page title and the configured suffix.  An empty page title
+	 * falls back to DefaultTitle so a titleless route never inherits the previous page's title.
+	 *
+	 * @param {string} pTitle - the page-specific title (may be empty)
+	 * @returns {string}
+	 */composeTitle(pTitle){let tmpTitle=typeof pTitle==='string'?pTitle:'';if(!tmpTitle){return this.options.DefaultTitle||'';}let tmpSuffix=this.options.TitleSuffix||'';return tmpSuffix?tmpTitle+tmpSuffix:tmpTitle;}/**
+	 * Set document.title from a page title (applying the configured suffix).  Public so async / entity
+	 * pages can set their title once the record loads, after the route handler has already run.
+	 *
+	 * @param {string} pTitle - the page-specific title
+	 */setDocumentTitle(pTitle){if(typeof document==='undefined'){return;}document.title=this.composeTitle(pTitle);}// Whether the router should manage document.title at all: only once a DefaultTitle or TitleSuffix is
+// configured, or a per-route title is supplied.  Keeps the no-configuration path from touching the DOM.
+_managesTitle(pTitle){return pTitle!==undefined||!!this.options.DefaultTitle||!!this.options.TitleSuffix;}// Apply a route's title on match.  A per-route title (string or (pData)=>string) wins; a route with no
+// title resets to DefaultTitle so the previous page's title does not linger.
+_applyRouteTitle(pTitle,pData){if(typeof document==='undefined'||!this._managesTitle(pTitle)){return;}let tmpResolved=typeof pTitle==='function'?pTitle(pData):pTitle;document.title=this.composeTitle(tmpResolved);}/**
 	 * Add a route to the router.
-	 */addRoute(pRoute,pRenderable){if(typeof pRenderable==='function'){this.router.on(pRoute,pRenderable);}else if(typeof pRenderable==='string'){// Run this as a template, allowing some whack things with functions in template expressions.
-this.router.on(pRoute,pData=>{this.pict.parseTemplate(pRenderable,pData,null,this.pict);});}else{// renderable isn't usable!
+	 *
+	 * @param {string} pRoute - the route pattern
+	 * @param {function|string} pRenderable - a handler function or a template string
+	 * @param {string|function} [pTitle] - optional document title for this route: a string, or a
+	 *        (pData)=>string resolved on match.  Requires DefaultTitle/TitleSuffix configured (or this
+	 *        arg present) for the router to touch document.title.
+	 */addRoute(pRoute,pRenderable,pTitle){if(typeof pRenderable==='function'){this.router.on(pRoute,pData=>{this._applyRouteTitle(pTitle,pData);return pRenderable(pData);});}else if(typeof pRenderable==='string'){// Run this as a template, allowing some whack things with functions in template expressions.
+this.router.on(pRoute,pData=>{this._applyRouteTitle(pTitle,pData);this.pict.parseTemplate(pRenderable,pData,null,this.pict);});}else{// renderable isn't usable!
 this.pict.log.warn(`Route ${pRoute} has an invalid renderable.`);return;}// By default, resolve after each route is added (legacy behavior).
 // Applications can skip this by setting SkipRouteResolveOnAdd: true in
 // the provider config JSON, or globally via
@@ -1753,12 +1780,18 @@ fResolve(pResult);}/**
 	 *   a rect-like { left, top, width, height } anchor (handy for context menus).
 	 * @param {object} pOptions
 	 * @param {Array}    pOptions.items     - [{ Hash, Label, Style?, Disabled?, Tooltip?, Icon?, Separator? }]
-	 * @param {string}   [pOptions.align]   - 'left'|'right' (default 'left')
+	 * @param {string}   [pOptions.ContentHTML] - Free-form HTML body for the popover, rendered
+	 *   verbatim via innerHTML INSTEAD of building a menu from items[]. When set, the element is
+	 *   a plain anchored popover (no role=menu / keyboard item nav); outside-click, Escape,
+	 *   auto-flip and reposition still apply. Sanitize untrusted content. items is ignored.
+	 * @param {string}   [pOptions.align]   - 'left'|'right'|'center' (default 'left')
 	 * @param {string}   [pOptions.position]- 'auto'|'below'|'above' (default 'auto')
 	 * @param {string}   [pOptions.minWidth]- CSS minWidth (default: anchor width if known, else '160px')
+	 * @param {string}   [pOptions.maxWidth]- CSS maxWidth (default unset; the base menu caps at 360px,
+	 *   the --content variant uncaps — set this for wide rich-content popovers)
 	 * @param {string}   [pOptions.maxHeight]- CSS maxHeight (default '60vh')
 	 * @param {string}   [pOptions.className]- extra class(es) for the menu element
-	 * @param {boolean}  [pOptions.closeOnSelect] - default true
+	 * @param {boolean}  [pOptions.closeOnSelect] - default true (no-op in ContentHTML mode)
 	 * @param {function} [pOptions.onSelect]- called with (Hash, Item) on selection
 	 * @param {function} [pOptions.onClose] - called after dismiss
 	 * @returns {Promise<{Hash: string, Item: object}|null>}
@@ -1782,7 +1815,21 @@ setTimeout(()=>{this._focusFirstEnabled(tmpMenu);},0);this._activeMenu={element:
 // ─────────────────────────────────────────────
 _resolveAnchor(pAnchor){if(!pAnchor){return null;}if(typeof pAnchor==='string'){return document.querySelector(pAnchor);}if(pAnchor.nodeType===1){return pAnchor;}// rect-like — no element to attach focus / outside-click ignore to,
 // but that's fine, the caller knows what they're doing.
-return null;}_anchorRect(pAnchor,pAnchorEl){if(pAnchorEl&&typeof pAnchorEl.getBoundingClientRect==='function'){return pAnchorEl.getBoundingClientRect();}if(pAnchor&&typeof pAnchor==='object'&&typeof pAnchor.left==='number'&&typeof pAnchor.top==='number'){return{left:pAnchor.left,top:pAnchor.top,width:pAnchor.width||0,height:pAnchor.height||0,right:pAnchor.left+(pAnchor.width||0),bottom:pAnchor.top+(pAnchor.height||0)};}return null;}_buildMenu(pItems,pOptions){let tmpId=this._modal._nextId();let tmpMenu=document.createElement('div');tmpMenu.className='pict-modal-dropdown';if(pOptions.className){tmpMenu.className+=' '+pOptions.className;}tmpMenu.id='pict-modal-dropdown-'+tmpId;tmpMenu.setAttribute('role','menu');tmpMenu.style.maxHeight=pOptions.maxHeight;let tmpHtml='';for(let i=0;i<pItems.length;i++){let tmpItem=pItems[i];if(tmpItem.Separator){tmpHtml+='<div class="pict-modal-dropdown-separator" role="separator"></div>';continue;}if(tmpItem.Header){tmpHtml+='<div class="pict-modal-dropdown-header">'+this._escapeHTML(tmpItem.Header)+'</div>';continue;}let tmpCls='pict-modal-dropdown-item';if(tmpItem.Style){tmpCls+=' pict-modal-dropdown-item--'+tmpItem.Style;}if(tmpItem.Disabled){tmpCls+=' pict-modal-dropdown-item--disabled';}let tmpAttrs=''+' data-pict-modal-dropdown-item'+' data-index="'+i+'"'+' data-hash="'+this._escapeHTML(tmpItem.Hash||'')+'"'+' role="menuitem"'+' tabindex="-1"';if(tmpItem.Disabled){tmpAttrs+=' aria-disabled="true" data-disabled';}if(tmpItem.Tooltip){tmpAttrs+=' title="'+this._escapeHTML(tmpItem.Tooltip)+'"';}let tmpIcon=tmpItem.Icon?'<span class="pict-modal-dropdown-item-icon">'+tmpItem.Icon+'</span>':'';let tmpHint=tmpItem.Hint?'<span class="pict-modal-dropdown-item-hint">'+this._escapeHTML(tmpItem.Hint)+'</span>':'';tmpHtml+='<div class="'+tmpCls+'"'+tmpAttrs+'>'+tmpIcon+'<span class="pict-modal-dropdown-item-label">'+this._escapeHTML(tmpItem.Label||'')+'</span>'+tmpHint+'</div>';}tmpMenu.innerHTML=tmpHtml;return tmpMenu;}_positionMenu(pMenu,pAnchorRect,pOptions){// Apply min-width before measuring so the menu's natural size accounts
+return null;}_anchorRect(pAnchor,pAnchorEl){if(pAnchorEl&&typeof pAnchorEl.getBoundingClientRect==='function'){return pAnchorEl.getBoundingClientRect();}if(pAnchor&&typeof pAnchor==='object'&&typeof pAnchor.left==='number'&&typeof pAnchor.top==='number'){return{left:pAnchor.left,top:pAnchor.top,width:pAnchor.width||0,height:pAnchor.height||0,right:pAnchor.left+(pAnchor.width||0),bottom:pAnchor.top+(pAnchor.height||0)};}return null;}/**
+	 * True when the value is usable as ContentHTML — a primitive string or a
+	 * boxed String object (some template engines hand back `new String(...)`,
+	 * which is `typeof 'object'` and would otherwise slip past the guard).
+	 *
+	 * @param {*} pValue
+	 * @returns {boolean}
+	 */_isContentHTML(pValue){return typeof pValue==='string'||pValue instanceof String;}_buildMenu(pItems,pOptions){let tmpId=this._modal._nextId();let tmpMenu=document.createElement('div');tmpMenu.className='pict-modal-dropdown';// Free-form content popovers carry a modifier so the host can reset the
+// menu-item chrome (padding / max-width) and style the body itself.
+if(this._isContentHTML(pOptions.ContentHTML)){tmpMenu.className+=' pict-modal-dropdown--content';}if(pOptions.className){tmpMenu.className+=' '+pOptions.className;}tmpMenu.id='pict-modal-dropdown-'+tmpId;tmpMenu.style.maxHeight=pOptions.maxHeight;if(pOptions.maxWidth){tmpMenu.style.maxWidth=pOptions.maxWidth;}// ContentHTML mode: render the caller's HTML verbatim instead of building
+// a menu from items[]. This is a free-form anchored popover (e.g. a rich
+// info card, or a pre-rendered template menu) — not a role=menu list, so
+// we skip the menu role and the per-item keyboard semantics. Outside-click
+// / Escape / auto-flip / reposition all still apply from dropdown().
+if(this._isContentHTML(pOptions.ContentHTML)){tmpMenu.innerHTML=pOptions.ContentHTML;return tmpMenu;}tmpMenu.setAttribute('role','menu');let tmpHtml='';for(let i=0;i<pItems.length;i++){let tmpItem=pItems[i];if(tmpItem.Separator){tmpHtml+='<div class="pict-modal-dropdown-separator" role="separator"></div>';continue;}if(tmpItem.Header){tmpHtml+='<div class="pict-modal-dropdown-header">'+this._escapeHTML(tmpItem.Header)+'</div>';continue;}let tmpCls='pict-modal-dropdown-item';if(tmpItem.Style){tmpCls+=' pict-modal-dropdown-item--'+tmpItem.Style;}if(tmpItem.Disabled){tmpCls+=' pict-modal-dropdown-item--disabled';}let tmpAttrs=''+' data-pict-modal-dropdown-item'+' data-index="'+i+'"'+' data-hash="'+this._escapeHTML(tmpItem.Hash||'')+'"'+' role="menuitem"'+' tabindex="-1"';if(tmpItem.Disabled){tmpAttrs+=' aria-disabled="true" data-disabled';}if(tmpItem.Tooltip){tmpAttrs+=' title="'+this._escapeHTML(tmpItem.Tooltip)+'"';}let tmpIcon=tmpItem.Icon?'<span class="pict-modal-dropdown-item-icon">'+tmpItem.Icon+'</span>':'';let tmpHint=tmpItem.Hint?'<span class="pict-modal-dropdown-item-hint">'+this._escapeHTML(tmpItem.Hint)+'</span>':'';tmpHtml+='<div class="'+tmpCls+'"'+tmpAttrs+'>'+tmpIcon+'<span class="pict-modal-dropdown-item-label">'+this._escapeHTML(tmpItem.Label||'')+'</span>'+tmpHint+'</div>';}tmpMenu.innerHTML=tmpHtml;return tmpMenu;}_positionMenu(pMenu,pAnchorRect,pOptions){// Apply min-width before measuring so the menu's natural size accounts
 // for the constraint.
 let tmpMinWidth=pOptions.minWidth||(pAnchorRect.width>=80?Math.ceil(pAnchorRect.width)+'px':'160px');pMenu.style.minWidth=tmpMinWidth;// Measure after attaching.
 let tmpMenuRect=pMenu.getBoundingClientRect();let tmpVw=window.innerWidth||document.documentElement.clientWidth;let tmpVh=window.innerHeight||document.documentElement.clientHeight;let tmpGap=4;// breathing room between anchor and menu
@@ -2168,9 +2215,11 @@ class PictModalShellManager{constructor(pModalSection){this._modal=pModalSection
 	 * Show a toast notification.
 	 *
 	 * @param {string} pMessage - Toast message text
-	 * @param {object} [pOptions] - Options (type, duration, position, dismissible)
+	 * @param {object} [pOptions] - Options (type, duration, position, dismissible, allowHTML)
+	 * @param {boolean} [pOptions.allowHTML=false] - When true, render pMessage as raw HTML instead of escaping it. Only pass trusted markup.
 	 * @returns {{ dismiss: function }} Handle with dismiss method
-	 */toast(pMessage,pOptions){let tmpOptions=Object.assign({},this._modal.options.DefaultToastOptions,pOptions);let tmpContainer=this._getContainer(tmpOptions.position);let tmpId=this._modal._nextId();let tmpToast=document.createElement('div');tmpToast.className='pict-modal-toast pict-modal-toast--'+tmpOptions.type;tmpToast.id='pict-modal-toast-'+tmpId;let tmpContent='<span class="pict-modal-toast-message">'+this._escapeHTML(pMessage)+'</span>';if(tmpOptions.dismissible){tmpContent+='<button class="pict-modal-toast-dismiss" aria-label="Dismiss">&times;</button>';}tmpToast.innerHTML=tmpContent;// Create handle
+	 */toast(pMessage,pOptions){let tmpOptions=Object.assign({},this._modal.options.DefaultToastOptions,pOptions);let tmpContainer=this._getContainer(tmpOptions.position);let tmpId=this._modal._nextId();let tmpToast=document.createElement('div');tmpToast.className='pict-modal-toast pict-modal-toast--'+tmpOptions.type;tmpToast.id='pict-modal-toast-'+tmpId;// Escape by default; render raw markup only when the caller opts in with allowHTML (trusted content).
+let tmpMessageMarkup=tmpOptions.allowHTML===true?pMessage:this._escapeHTML(pMessage);let tmpContent='<span class="pict-modal-toast-message">'+tmpMessageMarkup+'</span>';if(tmpOptions.dismissible){tmpContent+='<button class="pict-modal-toast-dismiss" aria-label="Dismiss">&times;</button>';}tmpToast.innerHTML=tmpContent;// Create handle
 let tmpDismissed=false;let tmpTimeoutHandle=null;let tmpDismiss=()=>{if(tmpDismissed){return;}tmpDismissed=true;if(tmpTimeoutHandle){clearTimeout(tmpTimeoutHandle);}// Exit animation
 tmpToast.classList.remove('pict-modal-visible');tmpToast.classList.add('pict-modal-toast-exit');// Remove from active list
 this._modal._activeToasts=this._modal._activeToasts.filter(pEntry=>{return pEntry.element!==tmpToast;});// Remove from DOM after transition
@@ -2216,6 +2265,19 @@ if(tmpOptions.duration>0){tmpTimeoutHandle=setTimeout(tmpDismiss,tmpOptions.dura
 	 * @param {object} [pOptions] - Options (position, delay, maxWidth, interactive)
 	 * @returns {{ destroy: function }} Handle to remove the tooltip
 	 */richTooltip(pElement,pHTMLContent,pOptions){let tmpOptions=Object.assign({},this._modal.options.DefaultTooltipOptions,pOptions);return this._attachTooltip(pElement,pHTMLContent,true,tmpOptions);}/**
+	 * Attach a pinnable rich HTML tooltip to an element.
+	 *
+	 * Behaves like richTooltip() on hover/focus, but a click on the element
+	 * toggles a pinned state: while pinned the tooltip stays open (it does not
+	 * hide on mouseleave/focusout) and follows its anchor on scroll/resize.
+	 * This is opt-in sugar over richTooltip() with `{ pinnable: true }` — the
+	 * default tooltip()/richTooltip() behavior is unchanged.
+	 *
+	 * @param {HTMLElement} pElement - Target element
+	 * @param {string} pHTMLContent - HTML content for the tooltip
+	 * @param {object} [pOptions] - Options (position, delay, maxWidth, interactive, startPinned, onPinChange)
+	 * @returns {{ destroy: function, pin: function, unpin: function, isPinned: function }} Handle
+	 */pinnableTooltip(pElement,pHTMLContent,pOptions){let tmpOptions=Object.assign({},this._modal.options.DefaultTooltipOptions,pOptions,{pinnable:true});return this._attachTooltip(pElement,pHTMLContent,true,tmpOptions);}/**
 	 * Internal: attach tooltip event listeners to an element.
 	 *
 	 * @param {HTMLElement} pElement
@@ -2223,18 +2285,46 @@ if(tmpOptions.duration>0){tmpTimeoutHandle=setTimeout(tmpDismiss,tmpOptions.dura
 	 * @param {boolean} pIsHTML
 	 * @param {object} pOptions
 	 * @returns {{ destroy: function }}
-	 */_attachTooltip(pElement,pContent,pIsHTML,pOptions){let tmpTooltipElement=null;let tmpShowTimeout=null;let tmpHideTimeout=null;let tmpDestroyed=false;let tmpId=this._modal._nextId();let tmpShow=()=>{if(tmpDestroyed||tmpTooltipElement){return;}tmpTooltipElement=document.createElement('div');tmpTooltipElement.className='pict-modal-tooltip pict-modal-tooltip--'+pOptions.position;tmpTooltipElement.id='pict-modal-tooltip-'+tmpId;tmpTooltipElement.setAttribute('role','tooltip');tmpTooltipElement.style.maxWidth=pOptions.maxWidth;if(pOptions.interactive){tmpTooltipElement.classList.add('pict-modal-tooltip-interactive');}// Arrow
+	 */_attachTooltip(pElement,pContent,pIsHTML,pOptions){let tmpTooltipElement=null;let tmpShowTimeout=null;let tmpHideTimeout=null;let tmpDestroyed=false;let tmpId=this._modal._nextId();// Pin state — only meaningful when pOptions.pinnable is set. A pinned
+// tooltip stays visible (transient hide is suppressed) and follows its
+// anchor on scroll/resize.
+let tmpPinned=false;let tmpShow=()=>{if(tmpDestroyed||tmpTooltipElement){return;}tmpTooltipElement=document.createElement('div');tmpTooltipElement.className='pict-modal-tooltip pict-modal-tooltip--'+pOptions.position;tmpTooltipElement.id='pict-modal-tooltip-'+tmpId;tmpTooltipElement.setAttribute('role','tooltip');tmpTooltipElement.style.maxWidth=pOptions.maxWidth;if(pOptions.interactive){tmpTooltipElement.classList.add('pict-modal-tooltip-interactive');}// Optional consumer-supplied class(es) on the tooltip element, e.g.
+// to theme the bubble + arrow by overriding the --pict-modal-tooltip-*
+// custom properties for a specific tooltip.
+if(pOptions.className){let tmpExtraClasses=String(pOptions.className).split(/\s+/);for(let i=0;i<tmpExtraClasses.length;i++){if(tmpExtraClasses[i]){tmpTooltipElement.classList.add(tmpExtraClasses[i]);}}}// Arrow
 let tmpArrow=document.createElement('div');tmpArrow.className='pict-modal-tooltip-arrow';// Content
 let tmpContentDiv=document.createElement('div');if(pIsHTML){tmpContentDiv.innerHTML=pContent;}else{tmpContentDiv.textContent=pContent;}tmpTooltipElement.appendChild(tmpArrow);tmpTooltipElement.appendChild(tmpContentDiv);document.body.appendChild(tmpTooltipElement);// Set aria-describedby on target
 pElement.setAttribute('aria-describedby',tmpTooltipElement.id);// Position
-this._positionTooltip(tmpTooltipElement,pElement,pOptions.position);// Animate in
-void tmpTooltipElement.offsetHeight;tmpTooltipElement.classList.add('pict-modal-visible');// Track
+this._positionTooltip(tmpTooltipElement,pElement,pOptions.position);// Animate in — but only paint when the anchor is actually rendered.
+// A pinned / startPinned tooltip whose anchor lives in a hidden
+// container (e.g. an inactive tab panel) would otherwise show at the
+// clamped corner as an orphan. It is revealed later by tmpReposition
+// once the anchor gains a layout box (see the ResizeObserver below).
+void tmpTooltipElement.offsetHeight;if(this._isElementRendered(pElement)){tmpTooltipElement.classList.add('pict-modal-visible');}// Track
 this._modal._activeTooltips.push({element:tmpTooltipElement,targetElement:pElement,destroy:tmpDestroy});// For interactive tooltips, allow hovering over the tooltip itself
-if(pOptions.interactive&&tmpTooltipElement){tmpTooltipElement.addEventListener('mouseenter',()=>{if(tmpHideTimeout){clearTimeout(tmpHideTimeout);tmpHideTimeout=null;}});tmpTooltipElement.addEventListener('mouseleave',()=>{tmpHide();});}};let tmpHide=()=>{if(!tmpTooltipElement){return;}tmpTooltipElement.classList.remove('pict-modal-visible');let tmpEl=tmpTooltipElement;tmpTooltipElement=null;// Remove aria
+if(pOptions.interactive&&tmpTooltipElement){tmpTooltipElement.addEventListener('mouseenter',()=>{if(tmpHideTimeout){clearTimeout(tmpHideTimeout);tmpHideTimeout=null;}});tmpTooltipElement.addEventListener('mouseleave',()=>{if(!tmpPinned){tmpHide();}});}// Reflect pinned state on a freshly-(re)created element.
+if(tmpPinned&&tmpTooltipElement){tmpTooltipElement.classList.add('pict-modal-tooltip-pinned');}};let tmpHide=()=>{if(!tmpTooltipElement){return;}tmpTooltipElement.classList.remove('pict-modal-visible');let tmpEl=tmpTooltipElement;tmpTooltipElement=null;// Remove aria
 pElement.removeAttribute('aria-describedby');// Remove from tracking
-this._modal._activeTooltips=this._modal._activeTooltips.filter(pEntry=>{return pEntry.element!==tmpEl;});setTimeout(()=>{if(tmpEl.parentNode){tmpEl.parentNode.removeChild(tmpEl);}},220);};let tmpOnMouseEnter=()=>{if(tmpHideTimeout){clearTimeout(tmpHideTimeout);tmpHideTimeout=null;}tmpShowTimeout=setTimeout(tmpShow,pOptions.delay);};let tmpOnMouseLeave=()=>{if(tmpShowTimeout){clearTimeout(tmpShowTimeout);tmpShowTimeout=null;}// Small delay before hiding to allow moving to interactive tooltip
-if(pOptions.interactive){tmpHideTimeout=setTimeout(tmpHide,100);}else{tmpHide();}};let tmpOnFocusIn=()=>{tmpShowTimeout=setTimeout(tmpShow,pOptions.delay);};let tmpOnFocusOut=()=>{if(tmpShowTimeout){clearTimeout(tmpShowTimeout);tmpShowTimeout=null;}tmpHide();};// Attach listeners
-pElement.addEventListener('mouseenter',tmpOnMouseEnter);pElement.addEventListener('mouseleave',tmpOnMouseLeave);pElement.addEventListener('focusin',tmpOnFocusIn);pElement.addEventListener('focusout',tmpOnFocusOut);let tmpDestroy=()=>{if(tmpDestroyed){return;}tmpDestroyed=true;if(tmpShowTimeout){clearTimeout(tmpShowTimeout);}if(tmpHideTimeout){clearTimeout(tmpHideTimeout);}tmpHide();pElement.removeEventListener('mouseenter',tmpOnMouseEnter);pElement.removeEventListener('mouseleave',tmpOnMouseLeave);pElement.removeEventListener('focusin',tmpOnFocusIn);pElement.removeEventListener('focusout',tmpOnFocusOut);};return{destroy:tmpDestroy};}/**
+this._modal._activeTooltips=this._modal._activeTooltips.filter(pEntry=>{return pEntry.element!==tmpEl;});setTimeout(()=>{if(tmpEl.parentNode){tmpEl.parentNode.removeChild(tmpEl);}},220);};let tmpOnMouseEnter=()=>{if(tmpHideTimeout){clearTimeout(tmpHideTimeout);tmpHideTimeout=null;}tmpShowTimeout=setTimeout(tmpShow,pOptions.delay);};let tmpOnMouseLeave=()=>{if(tmpShowTimeout){clearTimeout(tmpShowTimeout);tmpShowTimeout=null;}// A pinned tooltip stays open regardless of pointer.
+if(tmpPinned){return;}// Small delay before hiding to allow moving to interactive tooltip
+if(pOptions.interactive){tmpHideTimeout=setTimeout(tmpHide,100);}else{tmpHide();}};let tmpOnFocusIn=()=>{tmpShowTimeout=setTimeout(tmpShow,pOptions.delay);};let tmpOnFocusOut=()=>{if(tmpShowTimeout){clearTimeout(tmpShowTimeout);tmpShowTimeout=null;}// A pinned tooltip stays open regardless of focus.
+if(tmpPinned){return;}tmpHide();};// -- Pin lifecycle (opt-in via pOptions.pinnable) --
+// Keep a pinned tooltip glued to its anchor as the page scrolls/resizes.
+// The element is position:fixed and portaled to <body>, so it does not
+// move with the document on its own. When the anchor scrolls out of the
+// viewport we fade the tooltip out (without dropping the pin) and bring
+// it back when the anchor returns.
+let tmpResizeObserver=null;let tmpReposition=()=>{if(!tmpTooltipElement){return;}let tmpRect=pElement.getBoundingClientRect();// Rendered (has a layout box) AND within the viewport. A hidden anchor
+// (display:none, or inside a hidden tab panel) has no box, so the
+// tooltip is hidden rather than stranded at the clamped corner.
+let tmpInView=this._isElementRendered(pElement)&&tmpRect.bottom>0&&tmpRect.top<window.innerHeight&&tmpRect.right>0&&tmpRect.left<window.innerWidth;if(tmpInView){this._positionTooltip(tmpTooltipElement,pElement,pOptions.position);tmpTooltipElement.classList.add('pict-modal-visible');}else{tmpTooltipElement.classList.remove('pict-modal-visible');}};let tmpAddRepositionListeners=()=>{// `true` (capture) so scrolls inside any nested container reposition too.
+window.addEventListener('scroll',tmpReposition,true);window.addEventListener('resize',tmpReposition);// A ResizeObserver on the anchor catches it being shown/hidden (e.g. a
+// tab panel toggling display) — transitions the window scroll/resize
+// listeners miss — so a pinned tooltip appears the moment its anchor
+// gains a layout box and hides again when it loses one.
+if(typeof ResizeObserver!=='undefined'){tmpResizeObserver=new ResizeObserver(()=>tmpReposition());tmpResizeObserver.observe(pElement);}};let tmpRemoveRepositionListeners=()=>{window.removeEventListener('scroll',tmpReposition,true);window.removeEventListener('resize',tmpReposition);if(tmpResizeObserver){tmpResizeObserver.disconnect();tmpResizeObserver=null;}};let tmpPin=()=>{if(tmpPinned||tmpDestroyed){return;}tmpPinned=true;if(!tmpTooltipElement){tmpShow();}if(tmpTooltipElement){tmpTooltipElement.classList.add('pict-modal-tooltip-pinned');}tmpAddRepositionListeners();if(typeof pOptions.onPinChange==='function'){pOptions.onPinChange(true,pElement);}};let tmpUnpin=()=>{if(!tmpPinned){return;}tmpPinned=false;tmpRemoveRepositionListeners();if(tmpTooltipElement){tmpTooltipElement.classList.remove('pict-modal-tooltip-pinned');}tmpHide();if(typeof pOptions.onPinChange==='function'){pOptions.onPinChange(false,pElement);}};let tmpOnClick=pEvent=>{if(pEvent){pEvent.preventDefault();pEvent.stopPropagation();}if(tmpPinned){tmpUnpin();}else{tmpPin();}};// Attach listeners
+pElement.addEventListener('mouseenter',tmpOnMouseEnter);pElement.addEventListener('mouseleave',tmpOnMouseLeave);pElement.addEventListener('focusin',tmpOnFocusIn);pElement.addEventListener('focusout',tmpOnFocusOut);if(pOptions.pinnable){pElement.addEventListener('click',tmpOnClick);}let tmpDestroy=()=>{if(tmpDestroyed){return;}tmpDestroyed=true;if(tmpShowTimeout){clearTimeout(tmpShowTimeout);}if(tmpHideTimeout){clearTimeout(tmpHideTimeout);}tmpRemoveRepositionListeners();tmpPinned=false;tmpHide();pElement.removeEventListener('mouseenter',tmpOnMouseEnter);pElement.removeEventListener('mouseleave',tmpOnMouseLeave);pElement.removeEventListener('focusin',tmpOnFocusIn);pElement.removeEventListener('focusout',tmpOnFocusOut);if(pOptions.pinnable){pElement.removeEventListener('click',tmpOnClick);}};// Optionally render already-pinned (explicit consumer opt-in).
+if(pOptions.pinnable&&pOptions.startPinned){tmpPin();}return{destroy:tmpDestroy,pin:tmpPin,unpin:tmpUnpin,isPinned:()=>{return tmpPinned;}};}/**
 	 * Position a tooltip element relative to the target element.
 	 * Flips direction if the tooltip would overflow the viewport.
 	 *
@@ -2245,6 +2335,14 @@ pElement.addEventListener('mouseenter',tmpOnMouseEnter);pElement.addEventListene
 if(tmpPosition==='top'&&tmpTargetRect.top<tmpTooltipRect.height+tmpGap){tmpPosition='bottom';}else if(tmpPosition==='bottom'&&window.innerHeight-tmpTargetRect.bottom<tmpTooltipRect.height+tmpGap){tmpPosition='top';}else if(tmpPosition==='left'&&tmpTargetRect.left<tmpTooltipRect.width+tmpGap){tmpPosition='right';}else if(tmpPosition==='right'&&window.innerWidth-tmpTargetRect.right<tmpTooltipRect.width+tmpGap){tmpPosition='left';}// Update class for arrow direction
 pTooltip.className=pTooltip.className.replace(/pict-modal-tooltip--\w+/,'pict-modal-tooltip--'+tmpPosition);let tmpTop=0;let tmpLeft=0;switch(tmpPosition){case'top':tmpTop=tmpTargetRect.top-tmpTooltipRect.height-tmpGap;tmpLeft=tmpTargetRect.left+tmpTargetRect.width/2-tmpTooltipRect.width/2;break;case'bottom':tmpTop=tmpTargetRect.bottom+tmpGap;tmpLeft=tmpTargetRect.left+tmpTargetRect.width/2-tmpTooltipRect.width/2;break;case'left':tmpTop=tmpTargetRect.top+tmpTargetRect.height/2-tmpTooltipRect.height/2;tmpLeft=tmpTargetRect.left-tmpTooltipRect.width-tmpGap;break;case'right':tmpTop=tmpTargetRect.top+tmpTargetRect.height/2-tmpTooltipRect.height/2;tmpLeft=tmpTargetRect.right+tmpGap;break;}// Clamp to viewport
 tmpLeft=Math.max(4,Math.min(tmpLeft,window.innerWidth-tmpTooltipRect.width-4));tmpTop=Math.max(4,Math.min(tmpTop,window.innerHeight-tmpTooltipRect.height-4));pTooltip.style.top=tmpTop+'px';pTooltip.style.left=tmpLeft+'px';}/**
+	 * Whether an element is currently rendered (has a layout box). Returns false
+	 * for a display:none element or one inside a display:none ancestor (e.g. an
+	 * inactive tab panel) — in which case a pinned tooltip should stay hidden
+	 * until the anchor reappears.
+	 *
+	 * @param {HTMLElement} pElement
+	 * @returns {boolean}
+	 */_isElementRendered(pElement){return!!(pElement&&typeof pElement.getClientRects==='function'&&pElement.getClientRects().length>0);}/**
 	 * Dismiss all active tooltips.
 	 */dismissAll(){let tmpTooltips=this._modal._activeTooltips.slice();for(let i=0;i<tmpTooltips.length;i++){tmpTooltips[i].destroy();}}}module.exports=PictModalTooltip;},{}],30:[function(require,module,exports){/**
  * Pict-Modal-Window
@@ -2299,7 +2397,7 @@ if(typeof pOptions.onOpen==='function'){pOptions.onOpen(pDialog);}}/**
 	 *
 	 * @param {string} pText
 	 * @returns {string}
-	 */_escapeHTML(pText){if(typeof pText!=='string'){return'';}return pText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}}module.exports=PictModalWindow;},{}],31:[function(require,module,exports){module.exports={"AutoInitialize":true,"AutoRender":false,"AutoSolveWithApp":false,"ViewIdentifier":"Pict-Section-Modal","OverlayClickDismisses":true,"DefaultConfirmOptions":{"title":"Confirm","confirmLabel":"OK","cancelLabel":"Cancel","dangerous":false,"unbounded":false},"DefaultDoubleConfirmOptions":{"title":"Are you sure?","confirmLabel":"Confirm","cancelLabel":"Cancel","phrasePrompt":"Type \"{phrase}\" to confirm:","confirmPhrase":"","unbounded":false},"DefaultModalOptions":{"title":"","content":"","buttons":[],"closeable":true,"width":"480px","unbounded":false},"DefaultTooltipOptions":{"position":"top","delay":200,"maxWidth":"300px","interactive":false},"DefaultToastOptions":{"type":"info","duration":3000,"position":"top-right","dismissible":true},"DefaultPanelOptions":{"position":"right","width":340,"minWidth":200,"maxWidth":600,"collapsible":true,"collapsed":false,"persist":false,"persistKey":""},"Templates":[],"Renderables":[],"CSS":/*css*/`
+	 */_escapeHTML(pText){if(typeof pText!=='string'){return'';}return pText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}}module.exports=PictModalWindow;},{}],31:[function(require,module,exports){module.exports={"AutoInitialize":true,"AutoRender":false,"AutoSolveWithApp":false,"ViewIdentifier":"Pict-Section-Modal","OverlayClickDismisses":true,"DefaultConfirmOptions":{"title":"Confirm","confirmLabel":"OK","cancelLabel":"Cancel","dangerous":false,"unbounded":false},"DefaultDoubleConfirmOptions":{"title":"Are you sure?","confirmLabel":"Confirm","cancelLabel":"Cancel","phrasePrompt":"Type \"{phrase}\" to confirm:","confirmPhrase":"","unbounded":false},"DefaultModalOptions":{"title":"","content":"","buttons":[],"closeable":true,"width":"480px","unbounded":false},"DefaultTooltipOptions":{"position":"top","delay":200,"maxWidth":"300px","interactive":false,"pinnable":false,"startPinned":false},"DefaultToastOptions":{"type":"info","duration":3000,"position":"top-right","dismissible":true,"allowHTML":false},"DefaultPanelOptions":{"position":"right","width":340,"minWidth":200,"maxWidth":600,"collapsible":true,"collapsed":false,"persist":false,"persistKey":""},"Templates":[],"Renderables":[],"CSS":/*css*/`
 /* pict-section-modal */
 .pict-modal-root
 {
@@ -2350,6 +2448,7 @@ if(typeof pOptions.onOpen==='function'){pOptions.onOpen(pDialog);}}/**
 	--pict-modal-tooltip-fg:          var(--theme-color-text-primary,      #ffffff);
 	--pict-modal-tooltip-border-radius:4px;
 	--pict-modal-tooltip-shadow:      0 2px 8px rgba(0, 0, 0, 0.15);
+	--pict-modal-tooltip-pinned-ring: var(--theme-color-brand-primary, #2E7D74);
 
 	/* Dropdown */
 	--pict-modal-dropdown-bg:                 var(--theme-color-background-panel,  #ffffff);
@@ -2712,6 +2811,14 @@ if(typeof pOptions.onOpen==='function'){pOptions.onOpen(pDialog);}}/**
 	opacity: 1;
 }
 
+/* Pinned tooltips stay open and can be interacted with; a subtle ring
+   distinguishes a pinned tooltip from a transient hover tooltip. */
+.pict-modal-tooltip.pict-modal-tooltip-pinned
+{
+	pointer-events: auto;
+	box-shadow: var(--pict-modal-tooltip-shadow), 0 0 0 1px var(--pict-modal-tooltip-pinned-ring);
+}
+
 .pict-modal-tooltip-arrow
 {
 	position: absolute;
@@ -2773,6 +2880,16 @@ if(typeof pOptions.onOpen==='function'){pOptions.onOpen(pDialog);}}/**
 	transform: translateY(-4px);
 	transition: opacity var(--pict-modal-transition-duration) ease,
 	            transform var(--pict-modal-transition-duration) ease;
+}
+
+/* Free-form content popovers keep the dropdown chrome (bg / border / shadow /
+   flip / dismiss) but hand sizing + inner padding to the injected content, so a
+   pre-rendered template menu or a wide rich card isn't boxed by the menu
+   defaults. Cap width per-call via the maxWidth option. */
+.pict-modal-dropdown.pict-modal-dropdown--content
+{
+	max-width: none;
+	padding: 0;
 }
 
 .pict-modal-dropdown.pict-modal-dropdown--above { transform: translateY(4px); }
@@ -3705,7 +3822,16 @@ if(typeof document!=='undefined'&&document.body){if(!document.body.classList.con
 	 * @param {string} pHTMLContent - HTML content
 	 * @param {object} [pOptions] - Options { position, delay, maxWidth, interactive }
 	 * @returns {{ destroy: function }}
-	 */richTooltip(pElement,pHTMLContent,pOptions){return this._tooltip.richTooltip(pElement,pHTMLContent,pOptions);}// -- Toast API --
+	 */richTooltip(pElement,pHTMLContent,pOptions){return this._tooltip.richTooltip(pElement,pHTMLContent,pOptions);}/**
+	 * Attach a pinnable rich HTML tooltip to an element. Hover/focus behaves
+	 * like richTooltip(); a click on the element toggles a pinned state that
+	 * keeps the tooltip open and follows the anchor on scroll/resize.
+	 *
+	 * @param {HTMLElement} pElement - Target element
+	 * @param {string} pHTMLContent - HTML content
+	 * @param {object} [pOptions] - Options { position, delay, maxWidth, interactive, startPinned, onPinChange }
+	 * @returns {{ destroy: function, pin: function, unpin: function, isPinned: function }}
+	 */pinnableTooltip(pElement,pHTMLContent,pOptions){return this._tooltip.pinnableTooltip(pElement,pHTMLContent,pOptions);}// -- Toast API --
 /**
 	 * Show a toast notification.
 	 *
@@ -3715,13 +3841,16 @@ if(typeof document!=='undefined'&&document.body){if(!document.body.classList.con
 	 */toast(pMessage,pOptions){return this._toast.toast(pMessage,pOptions);}// -- Dropdown API --
 /**
 	 * Open an anchor-positioned dropdown menu (no backdrop, click-outside
-	 * dismisses). Useful for nav menus and split-button addenda.
+	 * dismisses). Useful for nav menus and split-button addenda. Pass
+	 * `ContentHTML` instead of `items` to render a free-form anchored popover
+	 * (rich card, pre-rendered template menu) with the same dismiss/flip behavior.
 	 *
 	 * @param {HTMLElement|string|object} pAnchor - Element, CSS selector, or
 	 *   { left, top, width, height } rect for context-menu style anchoring.
-	 * @param {object} pOptions - { items, align, position, minWidth, maxHeight,
-	 *   className, closeOnSelect, onSelect, onClose }
-	 * @returns {Promise<{Hash, Item}|null>} Selection or null on dismiss.
+	 * @param {object} pOptions - { items | ContentHTML, align, position, minWidth,
+	 *   maxWidth, maxHeight, className, closeOnSelect, onSelect, onClose }
+	 * @returns {Promise<{Hash, Item}|null>} Selection or null on dismiss
+	 *   (always resolves null in ContentHTML mode).
 	 */dropdown(pAnchor,pOptions){return this._dropdown.dropdown(pAnchor,pOptions);}/**
 	 * Dismiss any open dropdown.
 	 */dismissDropdowns(){this._dropdown.dismissAll();}// -- Panel API --
@@ -5839,7 +5968,7 @@ let tmpState=_readAuthState(pPict,pConfig)||{};let tmpOnLogin=pPict.AppData&&pPi
 function _readAuthState(pPict,pConfig){let tmpParts=String(pConfig.AuthStateAddress||'').split('.');let tmpCursor=pPict;for(let i=0;i<tmpParts.length;i++){if(!tmpCursor||typeof tmpCursor!=='object'){return null;}tmpCursor=tmpCursor[tmpParts[i]];}return tmpCursor||null;}function _writeAuthState(pPict,pConfig,pValue){let tmpParts=String(pConfig.AuthStateAddress||'').split('.');if(tmpParts.length===0){return;}let tmpCursor=pPict;for(let i=0;i<tmpParts.length-1;i++){let tmpKey=tmpParts[i];if(!tmpCursor[tmpKey]||typeof tmpCursor[tmpKey]!=='object'){tmpCursor[tmpKey]={};}tmpCursor=tmpCursor[tmpKey];}tmpCursor[tmpParts[tmpParts.length-1]]=pValue;}// ────────────────────────────────────────────────────────────────────────
 // Misc
 // ────────────────────────────────────────────────────────────────────────
-function _safeNavigate(pPict,pConfig,pRoute){if(!pRoute){return;}if(pPict.PictApplication&&typeof pPict.PictApplication.navigateTo==='function'){pPict.PictApplication.navigateTo(pRoute);}else if(pPict.providers&&pPict.providers.PictRouter&&typeof pPict.providers.PictRouter.navigate==='function'){pPict.providers.PictRouter.navigate(pRoute);}}function _currentHashRoute(){if(typeof window==='undefined'||!window.location){return'';}let tmpHash=window.location.hash||'';if(tmpHash.charAt(0)==='#'){tmpHash=tmpHash.slice(1);}return tmpHash||'/';}function _warn(pPict,pErr){let tmpLog=pPict&&pPict.log||console;let tmpFn=tmpLog&&(tmpLog.warn||tmpLog.error)||console.warn;tmpFn('[Pict-Beacon-WebAuth-Client] hook threw: '+(pErr&&pErr.message||pErr));}module.exports={install};},{}],96:[function(require,module,exports){module.exports={"name":"retold-databeacon","version":"1.0.20","description":"Deployable data beacon service — connect to remote databases, introspect schemas, generate REST endpoints, and expose beacon capabilities to the Ultravisor mesh.","main":"source/Retold-DataBeacon.js","bin":{"retold-databeacon":"bin/retold-databeacon.js"},"scripts":{"start":"node bin/retold-databeacon.js","test":"npx quack test","test-browser":"npx mocha test/DataBeacon_Browser_Integration_tests.js -u tdd --exit --timeout 120000","coverage":"npx quack coverage","brand":"node node_modules/pict-section-theme/bin/pict-section-theme-brand.js --manifest ../../../Retold-Modules-Manifest.json --module retold-databeacon --favicons source/services/web-app/web/favicons","prebuild":"npm run brand","build":"npx quack build","docker-build":"docker build -t retold-databeacon .","docker-run":"docker run -p 8389:8389 -v $(pwd)/data:/app/data retold-databeacon","docker-up":"docker compose up -d --build","docker-down":"docker compose down","docker-package":"bash scripts/docker-package.sh","docker-package-fast":"bash scripts/docker-package.sh --skip-build","docker-test-up":"docker compose -f test/docker-compose.yml up -d","docker-test-down":"docker compose -f test/docker-compose.yml down","dev":"node test/dev-server.js","dev-seed":"node test/seed-dev.js","prepublishOnly":"npm test","postversion":"npx quack release postversion","postpublish":"npx quack release postpublish","publish:docker":"npx quack release publish --image","release:patch":"npx quack release patch","release:minor":"npx quack release minor","release:major":"npx quack release major","release:patch:image":"npx quack release patch --image","release:minor:image":"npx quack release minor --image","release:major:image":"npx quack release major --image"},"mocha":{"spec":"test/RetoldDataBeacon_tests.js","diff":true,"extension":["js"],"package":"./package.json","reporter":"spec","slow":"75","timeout":"10000","ui":"tdd","watch-files":["source/**/*.js","test/**/*.js"],"watch-ignore":["lib/vendor"]},"repository":{"type":"git","url":"https://github.com/fable-retold/retold-databeacon.git"},"keywords":["data","beacon","database","introspection","REST","ultravisor"],"retoldBeacon":{"displayName":"Retold Databeacon","description":"REST/meadow proxy over a connected database, with schema introspection and endpoint enable/disable.","category":"database","mode":"standalone-service","bin":"bin/retold-databeacon.js","argTemplate":["serve","--port",{"fromLabPath":"Port"},"--config",{"fromLabPath":"ConfigPath"}],"healthCheck":{"path":"/beacon/capabilities"},"defaultPort":8500,"requiresUltravisor":false,"configTemplate":{"APIServerPort":"{{Port}}","SQLite":{"SQLiteFilePath":"{{BeaconDir}}/databeacon.sqlite"}},"configForm":{"Fields":[{"Name":"EngineDatabase","Label":"Target engine / database","Type":"lab-engine-database-picker","Required":false}]},"docker":{"image":"retold-databeacon","dockerfile":"retold-databeacon.Dockerfile","dataMountPath":"/app/data","configMountPath":"/app/data/config.json","exposedPort":8500}},"author":"Steven Velozo <steven@velozo.com> (http://velozo.com/)","license":"MIT","bugs":{"url":"https://github.com/fable-retold/retold-databeacon/issues"},"homepage":"https://github.com/fable-retold/retold-databeacon","devDependencies":{"pict-docuserve":"^1.4.19","puppeteer":"^24.40.0","quackage":"^1.3.0","stricture":"^4.0.6","supertest":"^7.2.2"},"dependencies":{"fable":"^3.1.76","fable-serviceproviderbase":"^3.0.19","meadow":"^2.0.44","meadow-connection-manager":"^1.1.5","meadow-connection-mssql":"^1.0.23","meadow-connection-mysql":"^1.0.19","meadow-connection-oracle":"^1.0.2","meadow-connection-postgresql":"^1.0.7","meadow-connection-retold-databeacon":"^1.0.0","meadow-connection-sqlite":"^1.0.20","meadow-endpoints":"^4.0.22","meadow-migrationmanager":"^1.0.5","orator":"^6.1.2","orator-serviceserver-restify":"^2.0.11","orator-static-server":"^2.1.4","pict":"^1.0.381","pict-application":"^1.0.34","pict-provider-theme":"^1.1.2","pict-router":"^1.0.10","pict-section-code":"^1.0.11","pict-section-connection-form":"^1.0.0","pict-section-login":"^1.0.0","pict-section-modal":"^1.1.4","pict-section-theme":"^1.1.1","pict-view":"^1.0.68","retold-facto":"^1.0.2","ultravisor-beacon":"^1.0.5"},"optionalDependencies":{"meadow-connection-mongodb":"^1.0.3","meadow-connection-rocksdb":"^1.0.0","meadow-connection-solr":"^1.0.3"},"retold":{"brand":{"Hash":"retold-databeacon","Name":"DataBeacon","Tagline":"Connect, introspect, and expose remote databases","Palette":"ocean","Icon":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"frame-retold-databeacon-filled-light\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#28a9bf\"/>\n\t\t<g clip-path=\"url(#frame-retold-databeacon-filled-light)\"><circle cx=\"48\" cy=\"48\" r=\"39\" fill=\"#de5d3b\" opacity=\"0.85\"/>\n\t\t\t\t\t<circle cx=\"48\" cy=\"48\" r=\"28\" fill=\"rgba(255,255,255,0.18)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"38\" font-weight=\"700\"\n\t\t\tfill=\"#ffffff\" letter-spacing=\"-1\">RD</text>\n\t</svg>","IconType":"svg","Favicon":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"fav-retold-databeacon-light\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#28a9bf\"/>\n\t\t<g clip-path=\"url(#fav-retold-databeacon-light)\"><circle cx=\"48\" cy=\"48\" r=\"43\" fill=\"rgba(255,255,255,0.22)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"60\" font-weight=\"800\"\n\t\t\tfill=\"#ffffff\" letter-spacing=\"-1\">R</text>\n\t</svg>","FaviconDark":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"fav-retold-databeacon-dark\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#6ac8d9\"/>\n\t\t<g clip-path=\"url(#fav-retold-databeacon-dark)\"><circle cx=\"48\" cy=\"48\" r=\"43\" fill=\"rgba(255,255,255,0.22)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"60\" font-weight=\"800\"\n\t\t\tfill=\"#101418\" letter-spacing=\"-1\">R</text>\n\t</svg>","Colors":{"Primary":"#28a9bf","Secondary":"#de5d3b","PrimaryLight":"#28a9bf","PrimaryDark":"#6ac8d9","SecondaryLight":"#de5d3b","SecondaryDark":"#e7a08d"}}}};},{}],97:[function(require,module,exports){// Path-relative require lets the LogoGenerator stay out of the runtime bundle.
+function _safeNavigate(pPict,pConfig,pRoute){if(!pRoute){return;}if(pPict.PictApplication&&typeof pPict.PictApplication.navigateTo==='function'){pPict.PictApplication.navigateTo(pRoute);}else if(pPict.providers&&pPict.providers.PictRouter&&typeof pPict.providers.PictRouter.navigate==='function'){pPict.providers.PictRouter.navigate(pRoute);}}function _currentHashRoute(){if(typeof window==='undefined'||!window.location){return'';}let tmpHash=window.location.hash||'';if(tmpHash.charAt(0)==='#'){tmpHash=tmpHash.slice(1);}return tmpHash||'/';}function _warn(pPict,pErr){let tmpLog=pPict&&pPict.log||console;let tmpFn=tmpLog&&(tmpLog.warn||tmpLog.error)||console.warn;tmpFn('[Pict-Beacon-WebAuth-Client] hook threw: '+(pErr&&pErr.message||pErr));}module.exports={install};},{}],96:[function(require,module,exports){module.exports={"name":"retold-databeacon","version":"1.0.24","description":"Deployable data beacon service — connect to remote databases, introspect schemas, generate REST endpoints, and expose beacon capabilities to the Ultravisor mesh.","main":"source/Retold-DataBeacon.js","bin":{"retold-databeacon":"bin/retold-databeacon.js"},"scripts":{"start":"node bin/retold-databeacon.js","test":"npx quack test","test-browser":"npx mocha test/DataBeacon_Browser_Integration_tests.js -u tdd --exit --timeout 120000","coverage":"npx quack coverage","brand":"node node_modules/pict-section-theme/bin/pict-section-theme-brand.js --manifest ../../../Retold-Modules-Manifest.json --module retold-databeacon --favicons source/services/web-app/web/favicons","prebuild":"npm run brand","build":"npx quack build","docker-build":"docker build -t retold-databeacon .","docker-run":"docker run -p 8389:8389 -v $(pwd)/data:/app/data retold-databeacon","docker-up":"docker compose up -d --build","docker-down":"docker compose down","docker-package":"bash scripts/docker-package.sh","docker-package-fast":"bash scripts/docker-package.sh --skip-build","docker-test-up":"docker compose -f test/docker-compose.yml up -d","docker-test-down":"docker compose -f test/docker-compose.yml down","dev":"node test/dev-server.js","dev-seed":"node test/seed-dev.js","prepublishOnly":"npm test","postversion":"npx quack release postversion","postpublish":"npx quack release postpublish","publish:docker":"npx quack release publish --image","release:patch":"npx quack release patch","release:minor":"npx quack release minor","release:major":"npx quack release major","release:patch:image":"npx quack release patch --image","release:minor:image":"npx quack release minor --image","release:major:image":"npx quack release major --image"},"mocha":{"spec":"test/RetoldDataBeacon_tests.js","diff":true,"extension":["js"],"package":"./package.json","reporter":"spec","slow":"75","timeout":"10000","ui":"tdd","watch-files":["source/**/*.js","test/**/*.js"],"watch-ignore":["lib/vendor"]},"repository":{"type":"git","url":"https://github.com/fable-retold/retold-databeacon.git"},"keywords":["data","beacon","database","introspection","REST","ultravisor"],"retoldBeacon":{"displayName":"Retold Databeacon","description":"REST/meadow proxy over a connected database, with schema introspection and endpoint enable/disable.","category":"database","mode":"standalone-service","bin":"bin/retold-databeacon.js","argTemplate":["serve","--port",{"fromLabPath":"Port"},"--config",{"fromLabPath":"ConfigPath"}],"healthCheck":{"path":"/beacon/capabilities"},"defaultPort":8500,"requiresUltravisor":false,"configTemplate":{"APIServerPort":"{{Port}}","SQLite":{"SQLiteFilePath":"{{BeaconDir}}/databeacon.sqlite"}},"configForm":{"Fields":[{"Name":"EngineDatabase","Label":"Target engine / database","Type":"lab-engine-database-picker","Required":false}]},"docker":{"image":"retold-databeacon","dockerfile":"retold-databeacon.Dockerfile","dataMountPath":"/app/data","configMountPath":"/app/data/config.json","exposedPort":8500}},"author":"Steven Velozo <steven@velozo.com> (http://velozo.com/)","license":"MIT","bugs":{"url":"https://github.com/fable-retold/retold-databeacon/issues"},"homepage":"https://github.com/fable-retold/retold-databeacon","devDependencies":{"pict-docuserve":"^1.4.19","puppeteer":"^24.40.0","quackage":"^1.3.0","stricture":"^4.0.6","supertest":"^7.2.2"},"dependencies":{"fable":"^3.1.80","fable-serviceproviderbase":"^3.0.19","meadow":"^2.0.48","meadow-connection-manager":"^1.1.5","meadow-connection-mssql":"^1.0.24","meadow-connection-mysql":"^1.0.20","meadow-connection-oracle":"^1.0.2","meadow-connection-postgresql":"^1.0.9","meadow-connection-retold-databeacon":"^1.0.0","meadow-connection-sqlite":"^1.0.21","meadow-endpoints":"^4.0.23","meadow-migrationmanager":"^1.0.5","orator":"^6.1.3","orator-serviceserver-restify":"^2.0.12","orator-static-server":"^2.1.4","pict":"^1.0.394","pict-application":"^1.0.34","pict-provider-theme":"^1.1.2","pict-router":"^1.0.11","pict-section-code":"^1.0.11","pict-section-connection-form":"^1.0.0","pict-section-login":"^1.0.0","pict-section-modal":"^1.3.2","pict-section-theme":"^1.1.1","pict-view":"^1.0.68","retold-facto":"^1.0.2","ultravisor-beacon":"^1.0.5"},"optionalDependencies":{"meadow-connection-mongodb":"^1.0.3","meadow-connection-rocksdb":"^1.0.1","meadow-connection-solr":"^1.0.3"},"retold":{"brand":{"Hash":"retold-databeacon","Name":"DataBeacon","Tagline":"Connect, introspect, and expose remote databases","Palette":"ocean","Icon":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"frame-retold-databeacon-filled-light\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#28a9bf\"/>\n\t\t<g clip-path=\"url(#frame-retold-databeacon-filled-light)\"><circle cx=\"48\" cy=\"48\" r=\"39\" fill=\"#de5d3b\" opacity=\"0.85\"/>\n\t\t\t\t\t<circle cx=\"48\" cy=\"48\" r=\"28\" fill=\"rgba(255,255,255,0.18)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"38\" font-weight=\"700\"\n\t\t\tfill=\"#ffffff\" letter-spacing=\"-1\">RD</text>\n\t</svg>","IconType":"svg","Favicon":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"fav-retold-databeacon-light\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#28a9bf\"/>\n\t\t<g clip-path=\"url(#fav-retold-databeacon-light)\"><circle cx=\"48\" cy=\"48\" r=\"43\" fill=\"rgba(255,255,255,0.22)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"60\" font-weight=\"800\"\n\t\t\tfill=\"#ffffff\" letter-spacing=\"-1\">R</text>\n\t</svg>","FaviconDark":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"96\" height=\"96\">\n\t\t<defs>\n\t\t\t<clipPath id=\"fav-retold-databeacon-dark\">\n\t\t\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\"/>\n\t\t\t</clipPath>\n\t\t</defs>\n\t\t<path d=\"M 48.00 2.00 L 87.84 25.00 L 87.84 71.00 L 48.00 94.00 L 8.16 71.00 L 8.16 25.00 Z\" fill=\"#6ac8d9\"/>\n\t\t<g clip-path=\"url(#fav-retold-databeacon-dark)\"><circle cx=\"48\" cy=\"48\" r=\"43\" fill=\"rgba(255,255,255,0.22)\"/></g>\n\t\t<text x=\"48\" y=\"50\" text-anchor=\"middle\" dominant-baseline=\"central\"\n\t\t\tfont-family=\"-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif\"\n\t\t\tfont-size=\"60\" font-weight=\"800\"\n\t\t\tfill=\"#101418\" letter-spacing=\"-1\">R</text>\n\t</svg>","Colors":{"Primary":"#28a9bf","Secondary":"#de5d3b","PrimaryLight":"#28a9bf","PrimaryDark":"#6ac8d9","SecondaryLight":"#de5d3b","SecondaryDark":"#e7a08d"}}}};},{}],97:[function(require,module,exports){// Path-relative require lets the LogoGenerator stay out of the runtime bundle.
 // pict-app/ → up 4 to package root (modules/apps/retold-databeacon/).
 const tmpPackage=require('../../../../package.json');if(!tmpPackage.retold||!tmpPackage.retold.brand){throw new Error('retold-databeacon: package.json is missing retold.brand — '+'run `npm run brand` (which calls pict-section-theme-brand) before building');}module.exports=tmpPackage.retold.brand;},{"../../../../package.json":96}],98:[function(require,module,exports){/**
  * Retold DataBeacon — Pict Application
