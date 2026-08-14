@@ -233,9 +233,42 @@ class DataBeaconConnectionBridge extends libFableServiceProviderBase
 		return tmpNormalized;
 	}
 
+	/**
+	 * Is this beacon configured to let a remote-fronting connection present its
+	 * own login when a request carries no caller session?
+	 *
+	 * Off by default: a beacon services requests on someone else's behalf, so
+	 * falling back to its own identity would run those requests as the beacon's
+	 * user and silently widen what the caller can reach. Opting in is a
+	 * deployment-level statement that this beacon's connections act as
+	 * themselves — machine-to-machine movement, or public reference data.
+	 *
+	 * @return {boolean} true when DATABEACON_ALLOW_BOUND_SESSION_FALLBACK is set truthy
+	 */
+	_allowBoundSessionFallback()
+	{
+		let tmpSetting = process.env.DATABEACON_ALLOW_BOUND_SESSION_FALLBACK;
+		if (tmpSetting === undefined && this.fable.settings)
+		{
+			tmpSetting = this.fable.settings.AllowBoundSessionFallback;
+		}
+		if (typeof (tmpSetting) === 'boolean')
+		{
+			return tmpSetting;
+		}
+		return (String(tmpSetting).toLowerCase() === 'true' || String(tmpSetting) === '1');
+	}
+
 	_doConnect(pName, pType, pConfig, fCallback)
 	{
 		let tmpFullConfig = Object.assign({}, this._normalizeConfig(pConfig), { Type: pType });
+
+		// Only the remote-fronting connection types carry a session upstream;
+		// the SQL providers have no such notion.
+		if (pType === 'MeadowEndpoints' || pType === 'RetoldDataBeacon')
+		{
+			tmpFullConfig.AllowBoundSessionFallback = this._allowBoundSessionFallback();
+		}
 
 		this.fable.MeadowConnectionManager.connect(pName, tmpFullConfig,
 			(pError, pConnection) =>
