@@ -54,20 +54,12 @@
  * @license MIT
  */
 
-const { isValidIdentifier, DIALECT_QUOTE } = require('./DataBeacon-SQLEmitter-Aggregate.js');
+const { isValidIdentifier, DIALECT_QUOTE, DIALECT_PARAM_PLACEHOLDER } = require('./DataBeacon-SQLEmitter-Aggregate.js');
 
 const RECORD_FIELD_RE  = /^\{~D:Record\.([A-Za-z_][A-Za-z0-9_]*)~\}$/;
 const RELATED_FIELD_RE = /^\{~D:Related\.([A-Za-z_][A-Za-z0-9_]*)~\}$/;
 
 const KEYSET_CURSOR_ALIAS = '_dbkj_cursor';
-
-const DIALECT_PARAM_PLACEHOLDER = {
-	'PostgreSQL': () => '$1',
-	'SQLite':     () => '?',
-	'MySQL':      () => '?',
-	'MSSQL':      () => '@p1',
-	'Oracle':     () => ':1'
-};
 
 const buildJoinPagedSQL = (pType, pSpec) =>
 {
@@ -201,7 +193,7 @@ const buildJoinPagedSQL = (pType, pSpec) =>
 
 	if (tmpHasAfterValue)
 	{
-		let tmpPlaceholder = DIALECT_PARAM_PLACEHOLDER[pType]();
+		let tmpPlaceholder = DIALECT_PARAM_PLACEHOLDER[pType](1);
 		tmpWhereSQL = ' WHERE src.' + tmpQuote(tmpOrderBy) + ' > ' + tmpPlaceholder;
 		tmpParams.push(tmpSpec.AfterValue);
 	}

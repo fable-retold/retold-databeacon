@@ -354,7 +354,7 @@ class DataBeaconBeaconProvider extends libFableServiceProviderBase
 						SettingsSchema:
 						[
 							{ Name: 'IDBeaconConnection', DataType: 'Number', Required: true },
-							{ Name: 'AggregateSpec',      DataType: 'Object', Required: true }
+							{ Name: 'AggregateSpec',      DataType: 'Object', Required: true, Description: '{ Table, GroupBy, Aggregates, Filter?, OrderBy? }. Filter is an ordered array of { Column, Operator, Value, Connector } terms (plus "(" / ")" grouping) emitted as a parameterized WHERE ahead of the GROUP BY — see DataBeacon-SQLEmitter-Aggregate.js for the operator whitelist. Unknown keys are rejected rather than ignored.' }
 						],
 						Handler: function (pWorkItem, pContext, fHandlerCallback)
 						{
@@ -389,9 +389,12 @@ class DataBeaconBeaconProvider extends libFableServiceProviderBase
 
 									let tmpType = pConnectionRecord.Type;
 									let tmpSQL;
+									let tmpParams;
 									try
 									{
-										tmpSQL = buildAggregateSQL(tmpType, tmpSpec);
+										let tmpEmitted = buildAggregateSQL(tmpType, tmpSpec);
+										tmpSQL = tmpEmitted.SQL;
+										tmpParams = tmpEmitted.Params;
 									}
 									catch (pBuildError)
 									{
@@ -399,7 +402,7 @@ class DataBeaconBeaconProvider extends libFableServiceProviderBase
 									}
 
 									let tmpStart = Date.now();
-									tmpFable.DataBeaconSchemaIntrospector.executeQuery(tmpConnID, tmpSQL,
+									tmpFable.DataBeaconSchemaIntrospector.executeQuery(tmpConnID, tmpSQL, tmpParams,
 										(pError, pResults) =>
 										{
 											if (pError)
@@ -417,7 +420,8 @@ class DataBeaconBeaconProvider extends libFableServiceProviderBase
 														Rows: tmpRows,
 														RowCount: tmpRows.length,
 														ElapsedMs: tmpElapsed,
-														SQL: tmpSQL
+														SQL: tmpSQL,
+														Params: tmpParams
 													},
 													Log: []
 												});
