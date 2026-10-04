@@ -61,6 +61,37 @@ function _envOrFile(pVarName)
 	return undefined;
 }
 
+/**
+ * Parse the beacon registration tags from their JSON form.
+ *
+ * @param {string} [pTagsJSON] - A JSON object, e.g. '{"Region":"us-west"}'.
+ *
+ * @return {Record<string, any>} The tags; an empty object when unset or not a JSON object.
+ */
+function _parseBeaconTags(pTagsJSON)
+{
+	if (!pTagsJSON)
+	{
+		return {};
+	}
+	let tmpTags;
+	try
+	{
+		tmpTags = JSON.parse(pTagsJSON);
+	}
+	catch (pErr)
+	{
+		console.error(`Retold DataBeacon: DATABEACON_BEACON_TAGS is not valid JSON (${pErr.message}); registering without tags.`);
+		return {};
+	}
+	if (!tmpTags || typeof tmpTags !== 'object' || Array.isArray(tmpTags))
+	{
+		console.error('Retold DataBeacon: DATABEACON_BEACON_TAGS must be a JSON object; registering without tags.');
+		return {};
+	}
+	return tmpTags;
+}
+
 // ================================================================
 // CLI Argument Parsing
 // ================================================================
@@ -290,6 +321,9 @@ Environment variables (CLI flags take precedence):
                                differs from the beacon's mesh handle.
   DATABEACON_BEACON_PASSWORD   Auth password for the beacon connection
   DATABEACON_MAX_CONCURRENT    Max concurrent work items (default: 3)
+  DATABEACON_BEACON_TAGS       JSON object of tags to register with (e.g.
+                               '{"Region":"us-west"}'); the coordinator lists
+                               them with the beacon. Ignored if not an object.
 
   Any secret-bearing var also accepts a *_FILE suffix that points to a
   file whose contents become the value. Example:
@@ -493,7 +527,8 @@ function commandServe()
 					Name:          tmpBeaconName,
 					UserName:      tmpBeaconUser,
 					Password:      tmpBeaconPw,
-					MaxConcurrent: tmpMaxConc
+					MaxConcurrent: tmpMaxConc,
+					Tags:          _parseBeaconTags(_envOrFile('DATABEACON_BEACON_TAGS'))
 				};
 				let tmpAsLabel = tmpBeaconUser && tmpBeaconUser !== tmpBeaconName
 					? `"${tmpBeaconName}" (HTTP user: "${tmpBeaconUser}")`
