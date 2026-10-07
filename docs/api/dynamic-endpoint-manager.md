@@ -1,6 +1,6 @@
 # DataBeaconDynamicEndpointManager
 
-Generates Meadow DAL objects and REST endpoints from introspected table schemas. Each enabled table gets standard CRUD routes at `/1.0/{TableName}`. Uses per-connection Meadow instances to route queries to the correct external database provider.
+Generates Meadow DAL objects and REST endpoints from introspected table schemas. Each enabled table gets standard CRUD routes at `/1.0/{ConnectionHash}/{TableName}`, dispatched through one catch-all route per connection prefix into a per-table route table. Uses per-connection Meadow instances to route queries to the correct external database provider.
 
 **Module:** `source/services/DataBeacon-DynamicEndpointManager.js`
 **Service Type:** `DataBeaconDynamicEndpointManager`

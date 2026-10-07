@@ -185,7 +185,7 @@ Once the Meadow DAL and endpoints are created, `meadow-endpoints.connectRoutes()
 
 ### Warm-Up on Restart
 
-`warmUpEndpoints` queries `IntrospectedTable` for records with `EndpointsEnabled=1`, then calls `enableEndpoint` for each one whose parent connection is currently live. This restores the full set of dynamic endpoints after a container restart without requiring manual re-enablement.
+`warmUpEndpoints` queries `IntrospectedTable` for records with `EndpointsEnabled=1`, then calls `enableEndpoint` for each one whose parent connection is currently live. This restores the full set of dynamic endpoints after a container restart without requiring manual re-enablement. It yields to the event loop between tables, skips rewriting a flag that is already set, and leaves each table's routes uncompiled until its first request (see the route-table note in `architecture.md`); `node test/perf-warmup.js --tables 5000` measures startup and HTTP responsiveness at that scale.
 
 ## Beacon Capability Reference
 

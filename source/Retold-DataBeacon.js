@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS IntrospectedTable (
 	EndpointsEnabled INTEGER DEFAULT 0,
 	RowCountEstimate INTEGER DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS IntrospectedTable_IDBeaconConnection_TableName ON IntrospectedTable (IDBeaconConnection, TableName);
 INSERT OR IGNORE INTO User (IDUser, LoginID, Name) VALUES (1, 'system', 'System');
 `;
 

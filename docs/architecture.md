@@ -57,11 +57,13 @@ DynamicEndpointManager builds Meadow schema objects from introspected column def
 1. Parses the stored `ColumnDefinitions` JSON from the `IntrospectedTable` record
 2. Constructs a Meadow schema with appropriate types, sizes, and default values
 3. Creates a per-connection Meadow instance for provider isolation (so queries route to the correct external database)
-4. Instantiates a `meadow-endpoints` object and connects it to the Orator server
+4. Instantiates a `meadow-endpoints` object and mounts it in the table's own route table
 
-The resulting endpoints follow the standard Meadow REST pattern at `/1.0/{TableName}` with full CRUD operations (Create, Read, Reads, Update, Delete, Count, Schema).
+The resulting endpoints follow the standard Meadow REST pattern at `/1.0/{ConnectionHash}/{TableName}` with full CRUD operations (Create, Read, Reads, Update, Delete, Count, Schema).
 
-On startup, `warmUpEndpoints` re-enables any tables that were previously marked `EndpointsEnabled=true` in the internal database, but only if their parent connection is live.
+Each connection prefix (`/1.0/{ConnectionHash}`) has one catch-all route per verb on the Orator server, which dispatches into a small per-table route table keyed by the first path segment (`{TableName}`, `{TableName}s` or `{TableName}Select`). The server's router checks every existing route for a duplicate on each insert, so registering every table's routes on it directly made enabling N tables cost O(N²); per-table route tables keep it O(N) and leave the server's route count constant. A table's routes compile on its first request, so memory follows the tables actually in use. When two tables claim the same segment (`Item`'s list form and a table named `Items`), the match capturing fewer parameters wins — the same static-over-parametric preference a single router applies.
+
+On startup, `warmUpEndpoints` re-enables any tables that were previously marked `EndpointsEnabled=true` in the internal database, but only if their parent connection is live. It yields to the event loop between tables, so the server keeps answering while it warms up. `test/perf-warmup.js` measures it: 5000 enabled tables warm up in under two seconds on a developer workstation.
 
 Key routes:
 - `POST /beacon/endpoint/:connectionId/:tableName/enable` -- enable CRUD endpoints

@@ -3,14 +3,25 @@
  *
  * Generates meadow DAL objects and REST endpoints from introspected
  * table schemas. Each enabled table gets standard CRUD routes at
- * /1.0/{TableName}. Uses per-connection Meadow instances to route
- * queries to the correct external database provider.
+ * /1.0/{ConnectionHash}/{TableName}, served through one dispatch route per
+ * connection prefix into a small route table per table. Uses per-connection
+ * Meadow instances to route queries to the correct external database
+ * provider.
  *
  * @author Steven Velozo <steven@velozo.com>
  */
 const libFableServiceProviderBase = require('fable-serviceproviderbase');
 const libMeadow = require('meadow');
 const libMeadowEndpoints = require('meadow-endpoints');
+const libFindMyWay = require('find-my-way');
+
+// The first URL segment after a route prefix is the table scope, its list
+// form (scope + 's') or its select form (scope + 'Select') — meadow-endpoints'
+// route partials.
+const ROUTE_SEGMENT_SUFFIXES = [ 'Select', 's' ];
+// Orator service-server verb names and the HTTP methods they register.
+const ROUTE_TABLE_VERBS = { get: 'GET', post: 'POST', put: 'PUT', del: 'DELETE', patch: 'PATCH', opts: 'OPTIONS', head: 'HEAD' };
+const ROUTE_TABLE_METHODS = Object.values(ROUTE_TABLE_VERBS);
 
 const defaultDynamicEndpointManagerOptions = (
 	{
@@ -54,6 +65,15 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 		// `this.fable.Meadow{Type}Provider` binding at query time.
 		// Key: "connectionId-tableName", Value: true
 		this._RegisteredRouteKeys = {};
+
+		// Namespaced tables route through one dispatch route per prefix into a
+		// small route table per table scope. find-my-way checks every existing
+		// route for a duplicate on each insert, so one shared router makes
+		// registering N tables O(N^2); per-table tables keep it O(N). A table's
+		// routes compile on its first request (~100KB each), so memory tracks
+		// the tables in use rather than every enabled table.
+		// Key: route prefix ("/1.0/<routeHash>"), Value: Map<scope, { Endpoints, Router }>
+		this._RouteTables = {};
 	}
 
 	/**
@@ -361,17 +381,23 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 								tmpEndpoints.EndpointPrefix = `/${tmpEndpoints.EndpointVersion}/${tmpRouteHash}/${tmpDAL.scope}`;
 							}
 
-							// Restify can't unregister routes, so only call
-							// connectRoutes() the first time we wire this
-							// connection+table key. On subsequent enables
-							// (post-disconnect/reconnect) the original route
-							// handler is still live; we rely on it resolving
-							// `this.fable.Meadow{Type}Provider` (which we just
-							// refreshed above) at query time, so traffic hits
-							// the fresh live connection with no duplicate route
-							// registration.
-							if (!this._RegisteredRouteKeys[tmpKey])
+							if (tmpRouteHash)
 							{
+								// A re-enable replaces the table's route table
+								// outright, so it serves the fresh endpoints.
+								this._mountRouteTable(`/${tmpEndpoints.EndpointVersion}/${tmpRouteHash}`, tmpDAL.scope, tmpEndpoints);
+							}
+							else if (!this._RegisteredRouteKeys[tmpKey])
+							{
+								// Restify can't unregister routes, so only call
+								// connectRoutes() the first time we wire this
+								// connection+table key. On subsequent enables
+								// (post-disconnect/reconnect) the original route
+								// handler is still live; we rely on it resolving
+								// `this.fable.Meadow{Type}Provider` (which we just
+								// refreshed above) at query time, so traffic hits
+								// the fresh live connection with no duplicate route
+								// registration.
 								tmpEndpoints.connectRoutes(this.fable.OratorServiceServer);
 								this._RegisteredRouteKeys[tmpKey] = true;
 							}
@@ -389,25 +415,31 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 								routeHash: tmpRouteHash
 							};
 
-							// Update the IntrospectedTable record
+							let fEnabled = () =>
+							{
+								let tmpEndpointBase = tmpRouteHash
+									? `/1.0/${tmpRouteHash}/${pTableName}`
+									: `/1.0/${pTableName}`;
+								this.fable.log.info(`Dynamic endpoints enabled for ${pTableName} at [${tmpEndpointBase}] (connection #${pIDBeaconConnection})`);
+								return fCallback(null,
+								{
+									TableName: pTableName,
+									EndpointBase: tmpEndpointBase,
+									ColumnCount: tmpColumns.length
+								});
+							};
+
+							// Warm-up and restore re-enable rows already flagged;
+							// only write the flag when it changes.
+							if (tmpRecord.EndpointsEnabled == 1)
+							{
+								return fEnabled();
+							}
 							tmpRecord.EndpointsEnabled = 1;
 							let tmpUpdateQuery = this.fable.DAL.IntrospectedTable.query.clone()
 								.addRecord(tmpRecord);
 
-							this.fable.DAL.IntrospectedTable.doUpdate(tmpUpdateQuery,
-								() =>
-								{
-									let tmpEndpointBase = tmpRouteHash
-										? `/1.0/${tmpRouteHash}/${pTableName}`
-										: `/1.0/${pTableName}`;
-									this.fable.log.info(`Dynamic endpoints enabled for ${pTableName} at [${tmpEndpointBase}] (connection #${pIDBeaconConnection})`);
-									return fCallback(null,
-									{
-										TableName: pTableName,
-										EndpointBase: tmpEndpointBase,
-										ColumnCount: tmpColumns.length
-									});
-								});
+							this.fable.DAL.IntrospectedTable.doUpdate(tmpUpdateQuery, fEnabled);
 						}
 						catch (pEnableError)
 						{
@@ -416,6 +448,188 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 						}
 					});
 			});
+	}
+
+	/**
+	 * Mount one table's meadow endpoints behind the prefix's dispatch route,
+	 * connecting the dispatch route on first use. The table's routes compile
+	 * on its first request (_routeTableRouter).
+	 *
+	 * @param {string} pRoutePrefix - e.g. "/1.0/<routeHash>"
+	 * @param {string} pScope - The table's DAL scope (the first URL segment after the prefix).
+	 * @param {object} pEndpoints - The table's meadow-endpoints instance, EndpointPrefix already set.
+	 */
+	_mountRouteTable(pRoutePrefix, pScope, pEndpoints)
+	{
+		if (!this._RouteTables[pRoutePrefix])
+		{
+			this._RouteTables[pRoutePrefix] = new Map();
+			this._connectDispatchRoutes(pRoutePrefix);
+		}
+		this._RouteTables[pRoutePrefix].set(pScope, { Endpoints: pEndpoints, Router: null });
+	}
+
+	/**
+	 * A mounted table's router, compiling its routes on first use.
+	 *
+	 * @param {{ Endpoints: object, Router: object|null }} pRouteTable
+	 * @return {object} A find-my-way router.
+	 */
+	_routeTableRouter(pRouteTable)
+	{
+		if (!pRouteTable.Router)
+		{
+			let tmpRouter = libFindMyWay(this._routeTableOptions());
+			pRouteTable.Endpoints.connectRoutes(this._routeTableServer(tmpRouter));
+			pRouteTable.Router = tmpRouter;
+		}
+		return pRouteTable.Router;
+	}
+
+	/**
+	 * Route-table router options: the same configuration the service server
+	 * hands its own router, so matching (parameter length, trailing slashes,
+	 * case) behaves as it would there.
+	 *
+	 * @return {object}
+	 */
+	_routeTableOptions()
+	{
+		let tmpServer = this.fable.OratorServiceServer;
+		let tmpConfiguration = (tmpServer && tmpServer.options && tmpServer.options.hasOwnProperty('RestifyConfiguration')) ? tmpServer.options.RestifyConfiguration :
+			(this.fable.settings.hasOwnProperty('RestifyConfiguration')) ? this.fable.settings.RestifyConfiguration :
+			{};
+		return Object.assign({ maxParamLength: Number.MAX_SAFE_INTEGER }, tmpConfiguration);
+	}
+
+	/**
+	 * The service-server surface meadow-endpoints' connectRoutes() calls,
+	 * registering into a route table: every orator verb and its
+	 * *WithBodyParser form. The dispatch routes parse bodies
+	 * (_connectDispatchRoutes), so both forms register the same way. A route
+	 * table runs one handler per route, so more than one throws rather than
+	 * dropping middleware.
+	 *
+	 * @param {object} pRouter - A find-my-way router.
+	 * @return {object}
+	 */
+	_routeTableServer(pRouter)
+	{
+		let tmpServer = {};
+		let tmpVerbs = Object.keys(ROUTE_TABLE_VERBS);
+		for (let i = 0; i < tmpVerbs.length; i++)
+		{
+			let tmpVerb = tmpVerbs[i];
+			let tmpMethod = ROUTE_TABLE_VERBS[tmpVerb];
+			let fOn = (pRoute, ...fHandlers) =>
+			{
+				if (fHandlers.length !== 1)
+				{
+					throw new Error(`Route tables take exactly one handler per route; ${tmpMethod} ${pRoute} was given ${fHandlers.length}.`);
+				}
+				pRouter.on(tmpMethod, pRoute, fHandlers[0]);
+			};
+			tmpServer[tmpVerb] = fOn;
+			tmpServer[`${tmpVerb}WithBodyParser`] = fOn;
+		}
+		return tmpServer;
+	}
+
+	/**
+	 * Connect the prefix's catch-all routes on the service server, one per
+	 * verb, each with the server's body parser ahead of dispatch so every
+	 * table route sees a parsed body whatever the server-wide middleware.
+	 *
+	 * @param {string} pRoutePrefix
+	 */
+	_connectDispatchRoutes(pRoutePrefix)
+	{
+		let tmpServer = this.fable.OratorServiceServer;
+		let fDispatch = (pRequest, pResponse, fNext) =>
+		{
+			return this._dispatchRouteTable(pRoutePrefix, pRequest, pResponse, fNext);
+		};
+		let tmpRoute = `${pRoutePrefix}/*`;
+		let tmpVerbs = Object.keys(ROUTE_TABLE_VERBS);
+		for (let i = 0; i < tmpVerbs.length; i++)
+		{
+			tmpServer[`${tmpVerbs[i]}WithBodyParser`](tmpRoute, fDispatch);
+		}
+	}
+
+	/**
+	 * Candidate table scopes for a URL segment, most specific first.
+	 *
+	 * @param {string} pSegment
+	 * @return {Array<string>}
+	 */
+	_candidateScopes(pSegment)
+	{
+		let tmpCandidates = [ pSegment ];
+		for (let i = 0; i < ROUTE_SEGMENT_SUFFIXES.length; i++)
+		{
+			let tmpSuffix = ROUTE_SEGMENT_SUFFIXES[i];
+			if (pSegment.length > tmpSuffix.length && pSegment.endsWith(tmpSuffix))
+			{
+				tmpCandidates.push(pSegment.slice(0, -tmpSuffix.length));
+			}
+		}
+		return tmpCandidates;
+	}
+
+	/**
+	 * Route a request under a prefix to its table's route table, answering
+	 * 404 / 405 the way the service server's own router does on a miss.
+	 *
+	 * @param {string} pRoutePrefix
+	 * @param {object} pRequest
+	 * @param {object} pResponse
+	 * @param {function} fNext
+	 * @return {any}
+	 */
+	_dispatchRouteTable(pRoutePrefix, pRequest, pResponse, fNext)
+	{
+		let tmpPath = pRequest.getUrl().pathname;
+		let tmpRouteTables = this._RouteTables[pRoutePrefix];
+		let tmpSegment = tmpPath.slice(pRoutePrefix.length + 1).split('/')[0];
+		let tmpCandidates = this._candidateScopes(tmpSegment);
+		let tmpBestRoute = null;
+		let tmpPathKnown = false;
+		for (let i = 0; i < tmpCandidates.length; i++)
+		{
+			let tmpRouteTable = tmpRouteTables.get(tmpCandidates[i]);
+			if (!tmpRouteTable)
+			{
+				continue;
+			}
+			let tmpRouter = this._routeTableRouter(tmpRouteTable);
+			let tmpRoute = tmpRouter.find(pRequest.method, tmpPath);
+			// Two tables can claim a segment (Item's list "Items" and a table
+			// named Items). One router would prefer the static match over the
+			// parametric one; fewer captured params is that same preference.
+			if (tmpRoute && (!tmpBestRoute || Object.keys(tmpRoute.params).length < Object.keys(tmpBestRoute.params).length))
+			{
+				tmpBestRoute = tmpRoute;
+			}
+			if (!tmpRoute && !tmpPathKnown)
+			{
+				tmpPathKnown = ROUTE_TABLE_METHODS.some((pMethod) => !!tmpRouter.find(pMethod, tmpPath));
+			}
+		}
+		if (tmpBestRoute)
+		{
+			pRequest.params = Object.assign(pRequest.params || {}, tmpBestRoute.params);
+			return tmpBestRoute.handler(pRequest, pResponse, fNext);
+		}
+		if (tmpPathKnown)
+		{
+			pResponse.send(405, { code: 'MethodNotAllowed', message: `${pRequest.method} is not allowed` });
+		}
+		else
+		{
+			pResponse.send(404, { code: 'ResourceNotFound', message: `${tmpPath} does not exist` });
+		}
+		return fNext(false);
 	}
 
 	/**
@@ -520,25 +734,31 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 					tmpAnticipate.anticipate(
 						(fStepCallback) =>
 						{
-							// Only re-enable if the connection is live
-							let tmpConnectionBridge = this.fable.DataBeaconConnectionBridge;
-							if (tmpConnectionBridge && tmpConnectionBridge.isConnected(tmpRecord.IDBeaconConnection))
+							// Yield between tables: enabling is synchronous end to end
+							// with the SQLite store, so without this the server can't
+							// answer anything until every table is warm.
+							setImmediate(() =>
 							{
-								this.enableEndpoint(tmpRecord.IDBeaconConnection, tmpRecord.TableName,
-									(pEnableError) =>
-									{
-										if (pEnableError)
+								// Only re-enable if the connection is live
+								let tmpConnectionBridge = this.fable.DataBeaconConnectionBridge;
+								if (tmpConnectionBridge && tmpConnectionBridge.isConnected(tmpRecord.IDBeaconConnection))
+								{
+									this.enableEndpoint(tmpRecord.IDBeaconConnection, tmpRecord.TableName,
+										(pEnableError) =>
 										{
-											this.fable.log.warn(`Warm-up failed for ${tmpRecord.TableName}: ${pEnableError}`);
-										}
-										return fStepCallback();
-									});
-							}
-							else
-							{
-								this.fable.log.info(`Skipping warm-up for ${tmpRecord.TableName} — connection not live`);
-								return fStepCallback();
-							}
+											if (pEnableError)
+											{
+												this.fable.log.warn(`Warm-up failed for ${tmpRecord.TableName}: ${pEnableError}`);
+											}
+											return fStepCallback();
+										});
+								}
+								else
+								{
+									this.fable.log.info(`Skipping warm-up for ${tmpRecord.TableName} — connection not live`);
+									return fStepCallback();
+								}
+							});
 						});
 				}
 
@@ -597,19 +817,23 @@ class DataBeaconDynamicEndpointManager extends libFableServiceProviderBase
 					tmpAnticipate.anticipate(
 						(fStepCallback) =>
 						{
-							this.enableEndpoint(pIDBeaconConnection, tmpRecord.TableName,
-								(pEnableError) =>
-								{
-									if (pEnableError)
+							// Yield between tables, as warm-up does.
+							setImmediate(() =>
+							{
+								this.enableEndpoint(pIDBeaconConnection, tmpRecord.TableName,
+									(pEnableError) =>
 									{
-										this.fable.log.warn(`DataBeacon: Endpoint restore failed for ${tmpRecord.TableName}: ${pEnableError.message || pEnableError}`);
-									}
-									else
-									{
-										tmpRestoredCount++;
-									}
-									return fStepCallback();
-								});
+										if (pEnableError)
+										{
+											this.fable.log.warn(`DataBeacon: Endpoint restore failed for ${tmpRecord.TableName}: ${pEnableError.message || pEnableError}`);
+										}
+										else
+										{
+											tmpRestoredCount++;
+										}
+										return fStepCallback();
+									});
+							});
 						});
 				}
 
